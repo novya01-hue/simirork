@@ -12,51 +12,75 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ==========================================================
+      # 1. RÉCUPÉRER LE PROJET
+      # ==========================================================
       - name: Récupérer le projet
         uses: actions/checkout@v7
 
-      - name: Récupérer les informations de l'application
+      # ==========================================================
+      # 2. RÉCUPÉRER LE NOM DE L'APPLICATION
+      # ==========================================================
+      - name: Préparer l'identité de l'application
         id: app_info
         env:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
         run: |
-          APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
-
-          export APP_NAME
+          export APP_NAME_INPUT
 
           python3 <<'PY'
           import os
           import re
           import hashlib
           import unicodedata
-          from pathlib import Path
-          from html import escape
 
-          app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
+          app_name = os.environ.get(
+              "APP_NAME_INPUT",
+              "SimiRork App"
+          ).strip()
 
           if not app_name:
               app_name = "SimiRork App"
 
-          # --------------------------------------------------------
-          # Créer un identifiant Android unique et valide
-          # --------------------------------------------------------
-          normalized = unicodedata.normalize("NFKD", app_name)
-          normalized = normalized.encode("ascii", "ignore").decode("ascii")
+          # Une seule ligne pour éviter les problèmes GitHub Output
+          app_name = " ".join(app_name.split())
+
+          # ------------------------------------------------------
+          # Créer un slug Android
+          # Exemple :
+          # "Gestion de dépenses"
+          # -> gestiondedepenses
+          # ------------------------------------------------------
+          normalized = unicodedata.normalize(
+              "NFKD",
+              app_name
+          )
+
+          normalized = normalized.encode(
+              "ascii",
+              "ignore"
+          ).decode("ascii")
+
           normalized = normalized.lower()
 
-          words = re.findall(r"[a-z0-9]+", normalized)
+          words = re.findall(
+              r"[a-z0-9]+",
+              normalized
+          )
 
-          if words:
-              slug = "".join(words)
-          else:
+          slug = "".join(words)
+
+          if not slug:
               slug = "app"
-
-          slug = slug[:24]
 
           if not slug[0].isalpha():
               slug = "app" + slug
 
-          # Empreinte courte pour éviter les collisions
+          slug = slug[:24]
+
+          # ------------------------------------------------------
+          # Ajouter une empreinte stable pour éviter les collisions
+          # ------------------------------------------------------
           hash_value = hashlib.sha256(
               app_name.encode("utf-8")
           ).hexdigest()[:8]
@@ -65,125 +89,23 @@ jobs:
               f"com.yoski.app.{slug}.{hash_value}"
           )
 
-          print(f"Nom application : {app_name}")
-          print(f"Application ID : {application_id}")
+          echo_name = app_name.replace('"', '\\"')
 
-          # --------------------------------------------------------
-          # Modifier android/app/build.gradle ou build.gradle.kts
-          # --------------------------------------------------------
-          gradle_files = [
-              Path("android/app/build.gradle"),
-              Path("android/app/build.gradle.kts"),
-          ]
+          echo "Nom de l'application : ${echo_name}"
+          echo "Application ID : ${application_id}"
 
-          gradle_file = None
-
-          for candidate in gradle_files:
-              if candidate.exists():
-                  gradle_file = candidate
-                  break
-
-          if gradle_file is None:
-              raise SystemExit(
-                  "Impossible de trouver android/app/build.gradle"
-              )
-
-          gradle_text = gradle_file.read_text(encoding="utf-8")
-
-          pattern = r'applicationId\s*(?:=\s*)?["\'][^"\']+["\']'
-
-          replacement = f'applicationId "{application_id}"'
-
-          new_gradle_text, count = re.subn(
-              pattern,
-              replacement,
-              gradle_text,
-              count=1,
-          )
-
-          if count == 0:
-              raise SystemExit(
-                  "applicationId introuvable dans le fichier Gradle."
-              )
-
-          gradle_file.write_text(
-              new_gradle_text,
-              encoding="utf-8",
-          )
-
-          print(f"Application ID installé dans {gradle_file}")
-
-          # --------------------------------------------------------
-          # Modifier le nom affiché de l'application
-          # --------------------------------------------------------
-          strings_file = Path(
-              "android/app/src/main/res/values/strings.xml"
-          )
-
-          if strings_file.exists():
-              strings_text = strings_file.read_text(
-                  encoding="utf-8"
-              )
-
-              escaped_name = escape(
-                  app_name,
-                  quote=True,
-              )
-
-              app_name_pattern = (
-                  r'<string\s+name=["\']app_name["\']>'
-                  r'.*?'
-                  r'</string>'
-              )
-
-              replacement_string = (
-                  f'<string name="app_name">{escaped_name}</string>'
-              )
-
-              new_strings_text, string_count = re.subn(
-                  app_name_pattern,
-                  replacement_string,
-                  strings_text,
-                  count=1,
-                  flags=re.DOTALL,
-              )
-
-              if string_count == 0:
-                  new_strings_text = strings_text.replace(
-                      "</resources>",
-                      f"{replacement_string}\n</resources>",
-                  )
-
-              strings_file.write_text(
-                  new_strings_text,
-                  encoding="utf-8",
-              )
-
-              print(
-                  f"Nom Android configuré dans {strings_file}"
-              )
-
-          # --------------------------------------------------------
-          # Envoyer les valeurs aux étapes suivantes
-          # --------------------------------------------------------
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a",
-              encoding="utf-8",
-          ) as output:
-              output.write(
-                  f"app_name={app_name}\n"
-              )
-              output.write(
-                  f"application_id={application_id}\n"
-              )
+          # ------------------------------------------------------
+          # Sorties GitHub
+          # ------------------------------------------------------
+          {
+            echo "app_name=$app_name"
+            echo "application_id=$application_id"
+          } >> "$GITHUB_OUTPUT"
           PY
 
-      - name: Afficher l'identité Android générée
-        run: |
-          echo "Application : ${{ steps.app_info.outputs.app_name }}"
-          echo "Application ID : ${{ steps.app_info.outputs.application_id }}"
-
+      # ==========================================================
+      # 3. INJECTER LE HTML
+      # ==========================================================
       - name: Injecter le HTML généré par SimiRork
         if: ${{ github.event_name == 'repository_dispatch' }}
         env:
@@ -191,18 +113,27 @@ jobs:
         run: |
           printf '%s' "$HTML_BASE64" | base64 --decode > public/index.html
 
+      # ==========================================================
+      # 4. INSTALLER NODE.JS
+      # ==========================================================
       - name: Installer Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
 
+      # ==========================================================
+      # 5. INSTALLER JAVA
+      # ==========================================================
       - name: Installer Java 21
         uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '21'
 
+      # ==========================================================
+      # 6. PRÉPARER ANDROID SDK
+      # ==========================================================
       - name: Préparer Android SDK
         uses: android-actions/setup-android@v4
 
@@ -213,26 +144,248 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
+      # ==========================================================
+      # 7. INSTALLER LES DÉPENDANCES
+      # ==========================================================
       - name: Installer les dépendances Node
         run: npm ci
 
+      # ==========================================================
+      # 8. SYNCHRONISER CAPACITOR
+      # ==========================================================
       - name: Synchroniser Capacitor
         run: npx cap sync android
 
+      # ==========================================================
+      # 9. APPLIQUER LE NOM ET L'IDENTIFIANT APRÈS CAP SYNC
+      # ==========================================================
+      - name: Configurer le nom et l'identité Android
+        env:
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          from xml.sax.saxutils import escape
+
+          app_name = os.environ["APP_NAME"].strip()
+          application_id = os.environ["APPLICATION_ID"].strip()
+
+          # ======================================================
+          # A. MODIFIER applicationId
+          # ======================================================
+
+          gradle_candidates = [
+              Path("android/app/build.gradle"),
+              Path("android/app/build.gradle.kts"),
+          ]
+
+          gradle_file = None
+
+          for candidate in gradle_candidates:
+              if candidate.exists():
+                  gradle_file = candidate
+                  break
+
+          if gradle_file is None:
+              raise SystemExit(
+                  "Impossible de trouver le fichier Gradle Android."
+              )
+
+          gradle_text = gradle_file.read_text(
+              encoding="utf-8"
+          )
+
+          # Groovy :
+          # applicationId "com.xxx.xxx"
+          #
+          # Kotlin :
+          # applicationId = "com.xxx.xxx"
+          pattern = (
+              r'applicationId\s*(?:=\s*)?["\'][^"\']+["\']'
+          )
+
+          if '"' in gradle_text:
+              replacement = (
+                  f'applicationId "{application_id}"'
+              )
+          else:
+              replacement = (
+                  f'applicationId "{application_id}"'
+              )
+
+          new_gradle_text, count = re.subn(
+              pattern,
+              replacement,
+              gradle_text,
+              count=1,
+          )
+
+          if count == 0:
+              raise SystemExit(
+                  "Aucun applicationId trouvé dans le fichier Gradle."
+              )
+
+          gradle_file.write_text(
+              new_gradle_text,
+              encoding="utf-8"
+          )
+
+          print(
+              f"applicationId configuré : {application_id}"
+          )
+
+          # ======================================================
+          # B. MODIFIER LE NOM DE L'APPLICATION
+          # ======================================================
+
+          strings_file = Path(
+              "android/app/src/main/res/values/strings.xml"
+          )
+
+          if strings_file.exists():
+
+              strings_text = strings_file.read_text(
+                  encoding="utf-8"
+              )
+
+              escaped_name = escape(
+                  app_name,
+                  {'"': '&quot;'}
+              )
+
+              # Chercher un app_name existant
+              app_name_pattern = (
+                  r'<string\s+name=["\']app_name["\']>'
+                  r'.*?'
+                  r'</string>'
+              )
+
+              replacement_string = (
+                  f'<string name="app_name">'
+                  f'{escaped_name}'
+                  f'</string>'
+              )
+
+              new_strings_text, count = re.subn(
+                  app_name_pattern,
+                  replacement_string,
+                  strings_text,
+                  count=1,
+                  flags=re.DOTALL
+              )
+
+              if count == 0:
+                  if "</resources>" not in strings_text:
+                      raise SystemExit(
+                          "strings.xml ne contient pas </resources>."
+                      )
+
+                  new_strings_text = strings_text.replace(
+                      "</resources>",
+                      f"    {replacement_string}\n"
+                      "</resources>"
+                  )
+
+              strings_file.write_text(
+                  new_strings_text,
+                  encoding="utf-8"
+              )
+
+              print(
+                  f"Nom de l'application configuré : {app_name}"
+              )
+
+          else:
+              raise SystemExit(
+                  "Impossible de trouver android/app/src/main/res/values/strings.xml"
+              )
+
+          # ======================================================
+          # C. VÉRIFICATION MANIFEST
+          # ======================================================
+
+          manifest_file = Path(
+              "android/app/src/main/AndroidManifest.xml"
+          )
+
+          if manifest_file.exists():
+
+              manifest_text = manifest_file.read_text(
+                  encoding="utf-8"
+              )
+
+              print(
+                  "AndroidManifest.xml trouvé."
+              )
+
+              if '@string/app_name' in manifest_text:
+                  print(
+                      "Le manifeste utilise @string/app_name."
+                  )
+              else:
+                  print(
+                      "Attention : vérifier éventuellement "
+                      "android:label dans AndroidManifest.xml."
+                  )
+
+          else:
+              raise SystemExit(
+                  "AndroidManifest.xml introuvable."
+              )
+          PY
+
+      # ==========================================================
+      # 10. AFFICHER LA CONFIGURATION FINALE
+      # ==========================================================
+      - name: Vérifier l'identité finale
+        run: |
+          echo "=========================================="
+          echo "APPLICATION"
+          echo "=========================================="
+          echo "Nom : ${{ steps.app_info.outputs.app_name }}"
+          echo "ID  : ${{ steps.app_info.outputs.application_id }}"
+          echo "=========================================="
+
+          echo ""
+          echo "ApplicationId trouvé dans Gradle :"
+          grep -n "applicationId" android/app/build.gradle 2>/dev/null || true
+          grep -n "applicationId" android/app/build.gradle.kts 2>/dev/null || true
+
+          echo ""
+          echo "Nom trouvé dans strings.xml :"
+          grep -n "app_name" android/app/src/main/res/values/strings.xml || true
+
+      # ==========================================================
+      # 11. PRÉPARER GRADLE
+      # ==========================================================
       - name: Préparer Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Rendre Gradle exécutable
         run: chmod +x android/gradlew
 
+      # ==========================================================
+      # 12. CONSTRUIRE L'APK
+      # ==========================================================
       - name: Construire l'APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          ./gradlew assembleDebug --no-daemon
 
+      # ==========================================================
+      # 13. VÉRIFIER L'APK
+      # ==========================================================
       - name: Vérifier l'APK
         run: |
+          echo "APK généré :"
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
 
+      # ==========================================================
+      # 14. PUBLIER L'APK
+      # ==========================================================
       - name: Publier l'APK
         uses: actions/upload-artifact@v6
         with:
