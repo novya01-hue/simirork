@@ -12,95 +12,93 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ==========================================================
+      # 1. RÉCUPÉRER LE PROJET
+      # ==========================================================
       - name: Récupérer le projet
         uses: actions/checkout@v7
 
+      # ==========================================================
+      # 2. PRÉPARER LE NOM ET L'IDENTITÉ DE L'APPLICATION
+      # ==========================================================
       - name: Préparer l'identité de l'application
         id: app_info
         env:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
         run: |
-          export APP_NAME_INPUT
+          APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
 
-          python3 <<'PY'
-          import os
-          import re
-          import hashlib
-          import unicodedata
+          # Nettoyage des espaces
+          APP_NAME=$(printf '%s' "$APP_NAME" | tr '\r\n\t' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | sed 's/^ *//;s/ *$//')
 
-          app_name = os.environ.get(
-              "APP_NAME_INPUT",
-              "SimiRork App"
-          ).strip()
+          if [ -z "$APP_NAME" ]; then
+            APP_NAME="SimiRork App"
+          fi
 
-          if not app_name:
-              app_name = "SimiRork App"
+          # Convertir les accents en caractères ASCII
+          ASCII_NAME=$(printf '%s' "$APP_NAME" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$APP_NAME")
 
-          app_name = " ".join(app_name.split())
+          # ======================================================
+          # Nom de fichier
+          # Exemple :
+          # Gestion de dépenses -> gestion-de-depenses.apk
+          # Lavage de voiture   -> lavage-de-voiture.apk
+          # Comptage de billets -> comptage-de-billets.apk
+          # ======================================================
 
-          # ------------------------------------------------------
-          # Générer un slug pour le nom du fichier
-          # ------------------------------------------------------
-          normalized = unicodedata.normalize(
-              "NFKD",
-              app_name
-          )
+          FILE_SLUG=$(printf '%s' "$ASCII_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9][^a-z0-9]*/-/g' \
+            | sed 's/^-//;s/-$//')
 
-          normalized = normalized.encode(
-              "ascii",
-              "ignore"
-          ).decode("ascii")
+          if [ -z "$FILE_SLUG" ]; then
+            FILE_SLUG="simirork-app"
+          fi
 
-          normalized = normalized.lower()
+          APK_FILENAME="${FILE_SLUG}.apk"
 
-          words = re.findall(
-              r"[a-z0-9]+",
-              normalized
-          )
+          # ======================================================
+          # applicationId Android
+          # ======================================================
 
-          file_slug = "-".join(words)
+          PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9]//g')
 
-          if not file_slug:
-              file_slug = "simirork-app"
+          if [ -z "$PACKAGE_SLUG" ]; then
+            PACKAGE_SLUG="app"
+          fi
 
-          # ------------------------------------------------------
-          # Slug pour applicationId
-          # ------------------------------------------------------
-          package_slug = "".join(words)
+          FIRST_CHAR=$(printf '%s' "$PACKAGE_SLUG" | cut -c1)
 
-          if not package_slug:
-              package_slug = "app"
+          case "$FIRST_CHAR" in
+            [a-z])
+              ;;
+            *)
+              PACKAGE_SLUG="app${PACKAGE_SLUG}"
+              ;;
+          esac
 
-          if not package_slug[0].isalpha():
-              package_slug = "app" + package_slug
+          PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          package_slug = package_slug[:24]
+          # Empreinte du nom pour éviter les collisions
+          HASH_VALUE=$(printf '%s' "$APP_NAME" | sha256sum | cut -c1-8)
 
-          # ------------------------------------------------------
-          # Empreinte pour éviter les collisions
-          # ------------------------------------------------------
-          hash_value = hashlib.sha256(
-              app_name.encode("utf-8")
-          ).hexdigest()[:8]
+          APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.${HASH_VALUE}"
 
-          application_id = (
-              f"com.yoski.app.{package_slug}.{hash_value}"
-          )
-
-          apk_filename = f"{file_slug}.apk"
-
-          echo "Nom application : $app_name"
-          echo "Application ID  : $application_id"
-          echo "Nom APK          : $apk_filename"
+          echo "Nom application : $APP_NAME"
+          echo "Application ID  : $APPLICATION_ID"
+          echo "Nom fichier APK : $APK_FILENAME"
 
           {
-            echo "app_name=$app_name"
-            echo "application_id=$application_id"
-            echo "file_slug=$file_slug"
-            echo "apk_filename=$apk_filename"
+            echo "app_name=$APP_NAME"
+            echo "application_id=$APPLICATION_ID"
+            echo "apk_filename=$APK_FILENAME"
           } >> "$GITHUB_OUTPUT"
-          PY
 
+      # ==========================================================
+      # 3. INJECTER LE HTML GÉNÉRÉ
+      # ==========================================================
       - name: Injecter le HTML généré par SimiRork
         if: ${{ github.event_name == 'repository_dispatch' }}
         env:
@@ -108,18 +106,27 @@ jobs:
         run: |
           printf '%s' "$HTML_BASE64" | base64 --decode > public/index.html
 
+      # ==========================================================
+      # 4. INSTALLER NODE.JS
+      # ==========================================================
       - name: Installer Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
 
+      # ==========================================================
+      # 5. INSTALLER JAVA 21
+      # ==========================================================
       - name: Installer Java 21
         uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '21'
 
+      # ==========================================================
+      # 6. PRÉPARER ANDROID SDK
+      # ==========================================================
       - name: Préparer Android SDK
         uses: android-actions/setup-android@v4
 
@@ -130,176 +137,143 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
+      # ==========================================================
+      # 7. INSTALLER LES DÉPENDANCES
+      # ==========================================================
       - name: Installer les dépendances Node
         run: npm ci
 
+      # ==========================================================
+      # 8. SYNCHRONISER CAPACITOR
+      # ==========================================================
       - name: Synchroniser Capacitor
         run: npx cap sync android
 
-      - name: Configurer le nom et l'identifiant Android
+      # ==========================================================
+      # 9. CONFIGURER NOM + APPLICATION ID
+      #    APRÈS CAP SYNC
+      # ==========================================================
+      - name: Configurer l'identité Android
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
           APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
         run: |
-          python3 <<'PY'
-          import os
-          import re
-          from pathlib import Path
-          from xml.sax.saxutils import escape
+          GRADLE_FILE=""
 
-          app_name = os.environ["APP_NAME"].strip()
-          application_id = os.environ["APPLICATION_ID"].strip()
+          if [ -f "android/app/build.gradle" ]; then
+            GRADLE_FILE="android/app/build.gradle"
+          elif [ -f "android/app/build.gradle.kts" ]; then
+            GRADLE_FILE="android/app/build.gradle.kts"
+          else
+            echo "ERREUR : fichier Gradle Android introuvable."
+            exit 1
+          fi
 
-          # ======================================================
-          # 1. applicationId
-          # ======================================================
+          echo "Fichier Gradle : $GRADLE_FILE"
 
-          gradle_files = [
-              Path("android/app/build.gradle"),
-              Path("android/app/build.gradle.kts"),
-          ]
+          # ------------------------------------------------------
+          # applicationId
+          # ------------------------------------------------------
 
-          gradle_file = None
+          if [[ "$GRADLE_FILE" == *.kts ]]; then
+            sed -i -E \
+              "s/applicationId[[:space:]]*=[[:space:]]*\"[^\"]+\"/applicationId = \"$APPLICATION_ID\"/" \
+              "$GRADLE_FILE"
+          else
+            sed -i -E \
+              "s/applicationId[[:space:]]+\"[^\"]+\"/applicationId \"$APPLICATION_ID\"/" \
+              "$GRADLE_FILE"
+          fi
 
-          for candidate in gradle_files:
-              if candidate.exists():
-                  gradle_file = candidate
-                  break
+          echo "Application ID configuré : $APPLICATION_ID"
 
-          if gradle_file is None:
-              raise SystemExit(
-                  "Impossible de trouver le fichier Gradle Android."
-              )
+          # ------------------------------------------------------
+          # Nom Android
+          # ------------------------------------------------------
 
-          gradle_text = gradle_file.read_text(
-              encoding="utf-8"
-          )
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
 
-          if gradle_file.name.endswith(".kts"):
-              pattern = (
-                  r'applicationId\s*=\s*["\'][^"\']+["\']'
-              )
+          if [ ! -f "$STRINGS_FILE" ]; then
+            echo "ERREUR : strings.xml introuvable."
+            exit 1
+          fi
 
-              replacement = (
-                  f'applicationId = "{application_id}"'
-              )
-          else:
-              pattern = (
-                  r'applicationId\s+["\'][^"\']+["\']'
-              )
+          # Échapper les caractères XML
+          XML_NAME=$(printf '%s' "$APP_NAME" \
+            | sed \
+              -e 's/&/\&amp;/g' \
+              -e 's/</\&lt;/g' \
+              -e 's/>/\&gt;/g' \
+              -e 's/"/\&quot;/g' \
+              -e "s/'/\&apos;/g")
 
-              replacement = (
-                  f'applicationId "{application_id}"'
-              )
+          # Échapper le séparateur sed |
+          XML_NAME=$(printf '%s' "$XML_NAME" | sed 's/|/\\|/g')
 
-          new_gradle_text, count = re.subn(
-              pattern,
-              replacement,
-              gradle_text,
-              count=1,
-          )
+          if grep -q 'name="app_name"' "$STRINGS_FILE"; then
 
-          if count == 0:
-              raise SystemExit(
-                  "applicationId introuvable dans le fichier Gradle."
-              )
+            sed -i -E \
+              "s|<string[[:space:]]+name=\"app_name\">.*</string>|<string name=\"app_name\">$XML_NAME</string>|" \
+              "$STRINGS_FILE"
 
-          gradle_file.write_text(
-              new_gradle_text,
-              encoding="utf-8"
-          )
+          else
 
-          # ======================================================
-          # 2. Nom affiché Android
-          # ======================================================
+            sed -i \
+              "s|</resources>|  <string name=\"app_name\">$XML_NAME</string>\n</resources>|" \
+              "$STRINGS_FILE"
 
-          strings_file = Path(
-              "android/app/src/main/res/values/strings.xml"
-          )
+          fi
 
-          if not strings_file.exists():
-              raise SystemExit(
-                  "strings.xml introuvable."
-              )
+          echo "Nom Android configuré : $APP_NAME"
 
-          strings_text = strings_file.read_text(
-              encoding="utf-8"
-          )
-
-          escaped_name = escape(
-              app_name,
-              {'"': '&quot;'}
-          )
-
-          replacement_string = (
-              f'<string name="app_name">'
-              f'{escaped_name}'
-              f'</string>'
-          )
-
-          app_name_pattern = (
-              r'<string\s+name=["\']app_name["\']>'
-              r'.*?'
-              r'</string>'
-          )
-
-          new_strings_text, count = re.subn(
-              app_name_pattern,
-              replacement_string,
-              strings_text,
-              count=1,
-              flags=re.DOTALL
-          )
-
-          if count == 0:
-              if "</resources>" not in strings_text:
-                  raise SystemExit(
-                      "strings.xml ne contient pas </resources>."
-                  )
-
-              new_strings_text = strings_text.replace(
-                  "</resources>",
-                  f"    {replacement_string}\n"
-                  "</resources>"
-              )
-
-          strings_file.write_text(
-              new_strings_text,
-              encoding="utf-8"
-          )
-
-          print(
-              f"Nom Android : {app_name}"
-          )
-
-          print(
-              f"Application ID : {application_id}"
-          )
-          PY
-
-      - name: Vérifier la configuration finale
+      # ==========================================================
+      # 10. VÉRIFICATION
+      # ==========================================================
+      - name: Vérifier la configuration Android
+        env:
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+          APK_FILENAME: ${{ steps.app_info.outputs.apk_filename }}
         run: |
           echo "=========================================="
-          echo "Application : ${{ steps.app_info.outputs.app_name }}"
-          echo "Application ID : ${{ steps.app_info.outputs.application_id }}"
-          echo "Fichier APK : ${{ steps.app_info.outputs.apk_filename }}"
+          echo "CONFIGURATION APK"
           echo "=========================================="
+          echo "Nom            : $APP_NAME"
+          echo "Application ID : $APPLICATION_ID"
+          echo "Fichier APK    : $APK_FILENAME"
+          echo "=========================================="
+
+          echo ""
+          echo "applicationId :"
 
           grep -n "applicationId" android/app/build.gradle 2>/dev/null || true
           grep -n "applicationId" android/app/build.gradle.kts 2>/dev/null || true
+
+          echo ""
+          echo "app_name :"
+
           grep -n "app_name" android/app/src/main/res/values/strings.xml || true
 
+      # ==========================================================
+      # 11. PRÉPARER GRADLE
+      # ==========================================================
       - name: Préparer Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Rendre Gradle exécutable
         run: chmod +x android/gradlew
 
+      # ==========================================================
+      # 12. CONSTRUIRE L'APK
+      # ==========================================================
       - name: Construire l'APK
         working-directory: android
         run: |
           ./gradlew assembleDebug --no-daemon
 
+      # ==========================================================
+      # 13. RENOMMER L'APK
+      # ==========================================================
       - name: Préparer le fichier APK final
         env:
           APK_FILENAME: ${{ steps.app_info.outputs.apk_filename }}
@@ -310,8 +284,12 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk \
             "generated-apk/$APK_FILENAME"
 
-          ls -lh generated-apk
+          echo "APK final :"
+          ls -lh generated-apk/
 
+      # ==========================================================
+      # 14. PUBLIER L'APK
+      # ==========================================================
       - name: Publier l'APK
         uses: actions/upload-artifact@v6
         with:
