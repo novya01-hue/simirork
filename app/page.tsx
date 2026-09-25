@@ -17,7 +17,6 @@ const STORAGE_KEY = 'simirork_projects';
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
-
   const [showNewProject, setShowNewProject] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
@@ -29,6 +28,7 @@ export default function Home() {
   const [buildingApk, setBuildingApk] = useState(false);
   const [apkReady, setApkReady] = useState(false);
   const [apkError, setApkError] = useState('');
+  const [apkRunId, setApkRunId] = useState<string | null>(null);
 
   const [modelVersion, setModelVersion] = useState(
     'google/gemini-3.6-flash'
@@ -80,7 +80,6 @@ export default function Home() {
 
     setProjects(updatedProjects);
     setCurrentProject(project);
-
     setPrompt('');
     setGeneratedCode('');
     setNewName('');
@@ -89,6 +88,7 @@ export default function Home() {
     setActiveTab('prompt');
     setApkReady(false);
     setApkError('');
+    setApkRunId(null);
   };
 
   // Ouvrir un projet
@@ -99,6 +99,7 @@ export default function Home() {
     setActiveTab(project.code ? 'preview' : 'prompt');
     setApkReady(false);
     setApkError('');
+    setApkRunId(null);
   };
 
   // Retour aux applications
@@ -108,6 +109,7 @@ export default function Home() {
     setGeneratedCode('');
     setApkReady(false);
     setApkError('');
+    setApkRunId(null);
   };
 
   // Supprimer un projet
@@ -130,6 +132,7 @@ export default function Home() {
       setGeneratedCode('');
       setApkReady(false);
       setApkError('');
+      setApkRunId(null);
     }
   };
 
@@ -178,7 +181,7 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  // Génération APK Android
+  // Génération APK Android via GitHub Actions
   const handleBuildAPK = async () => {
     if (!generatedCode) {
       alert("Générez d'abord votre application.");
@@ -192,8 +195,10 @@ export default function Home() {
     setBuildingApk(true);
     setApkReady(false);
     setApkError('');
+    setApkRunId(null);
 
     try {
+      // 1. Lancer le build GitHub
       const response = await fetch('/api/build-apk', {
         method: 'POST',
         headers: {
@@ -207,13 +212,58 @@ export default function Home() {
 
       const data = await response.json();
 
-      if (!response.ok || !data.success) {
+      if (!response.ok || !data.success || !data.runId) {
         throw new Error(
-          data.error || 'Erreur pendant la génération de l’APK.'
+          data.error || 'Impossible de lancer la construction de l’APK.'
         );
       }
 
-      setApkReady(true);
+      const runId = data.runId;
+
+      // 2. Suivre le build jusqu'à sa fin
+      for (let attempt = 0; attempt < 120; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const statusResponse = await fetch(
+          `/api/build-apk/status?runId=${runId}`,
+          {
+            cache: 'no-store',
+          }
+        );
+
+        const statusData = await statusResponse.json();
+
+        if (!statusResponse.ok || !statusData.success) {
+          throw new Error(
+            statusData.error || 'Erreur pendant le suivi du build.'
+          );
+        }
+
+        // APK disponible
+        if (
+          statusData.status === 'completed' &&
+          statusData.conclusion === 'success' &&
+          statusData.artifactReady
+        ) {
+          setApkRunId(String(runId));
+          setApkReady(true);
+          return;
+        }
+
+        // Build terminé mais en erreur
+        if (
+          statusData.status === 'completed' &&
+          statusData.conclusion !== 'success'
+        ) {
+          throw new Error(
+            statusData.error || 'Le build Android a échoué.'
+          );
+        }
+      }
+
+      throw new Error(
+        'La construction prend trop de temps. Vérifiez le build dans GitHub Actions.'
+      );
     } catch (error) {
       console.error('Erreur APK:', error);
 
@@ -243,6 +293,7 @@ export default function Home() {
     setLoading(true);
     setApkReady(false);
     setApkError('');
+    setApkRunId(null);
 
     try {
       const res = await fetch('/api/generate', {
@@ -555,7 +606,11 @@ export default function Home() {
             </div>
 
             <a
-              href="/api/build-apk/download"
+              href={
+                apkRunId
+                  ? `/api/build-apk/download?runId=${apkRunId}`
+                  : '#'
+              }
               className="rounded-lg bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-500"
             >
               ⬇ Télécharger l'APK
