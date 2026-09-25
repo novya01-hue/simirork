@@ -28,23 +28,25 @@ jobs:
         run: |
           APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
 
-          # Nettoyage des espaces
-          APP_NAME=$(printf '%s' "$APP_NAME" | tr '\r\n\t' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | sed 's/^ *//;s/ *$//')
+          APP_NAME=$(printf '%s' "$APP_NAME" \
+            | tr '\r\n\t' ' ' \
+            | sed 's/[[:space:]][[:space:]]*/ /g' \
+            | sed 's/^ *//;s/ *$//')
 
           if [ -z "$APP_NAME" ]; then
             APP_NAME="SimiRork App"
           fi
 
-          # Convertir les accents en caractères ASCII
-          ASCII_NAME=$(printf '%s' "$APP_NAME" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$APP_NAME")
-
-          # ======================================================
-          # Nom de fichier
+          # ------------------------------------------------------
+          # Nom du fichier APK
           # Exemple :
           # Gestion de dépenses -> gestion-de-depenses.apk
           # Lavage de voiture   -> lavage-de-voiture.apk
-          # Comptage de billets -> comptage-de-billets.apk
-          # ======================================================
+          # ------------------------------------------------------
+
+          ASCII_NAME=$(printf '%s' "$APP_NAME" \
+            | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
+            || printf '%s' "$APP_NAME")
 
           FILE_SLUG=$(printf '%s' "$ASCII_NAME" \
             | tr '[:upper:]' '[:lower:]' \
@@ -57,9 +59,9 @@ jobs:
 
           APK_FILENAME="${FILE_SLUG}.apk"
 
-          # ======================================================
-          # applicationId Android
-          # ======================================================
+          # ------------------------------------------------------
+          # Application ID Android
+          # ------------------------------------------------------
 
           PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" \
             | tr '[:upper:]' '[:lower:]' \
@@ -81,10 +83,15 @@ jobs:
 
           PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          # Empreinte du nom pour éviter les collisions
-          HASH_VALUE=$(printf '%s' "$APP_NAME" | sha256sum | cut -c1-8)
+          # Préfixe "a" obligatoire pour éviter qu'un segment
+          # de package commence par un chiffre.
+          HASH_VALUE=$(printf '%s' "$APP_NAME" \
+            | sha256sum \
+            | cut -c1-8)
 
-          APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.${HASH_VALUE}"
+          HASH_SEGMENT="a${HASH_VALUE}"
+
+          APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.${HASH_SEGMENT}"
 
           echo "Nom application : $APP_NAME"
           echo "Application ID  : $APPLICATION_ID"
@@ -150,8 +157,7 @@ jobs:
         run: npx cap sync android
 
       # ==========================================================
-      # 9. CONFIGURER NOM + APPLICATION ID
-      #    APRÈS CAP SYNC
+      # 9. CONFIGURER L'IDENTITÉ ANDROID
       # ==========================================================
       - name: Configurer l'identité Android
         env:
@@ -176,19 +182,23 @@ jobs:
           # ------------------------------------------------------
 
           if [[ "$GRADLE_FILE" == *.kts ]]; then
+
             sed -i -E \
               "s/applicationId[[:space:]]*=[[:space:]]*\"[^\"]+\"/applicationId = \"$APPLICATION_ID\"/" \
               "$GRADLE_FILE"
+
           else
+
             sed -i -E \
               "s/applicationId[[:space:]]+\"[^\"]+\"/applicationId \"$APPLICATION_ID\"/" \
               "$GRADLE_FILE"
+
           fi
 
           echo "Application ID configuré : $APPLICATION_ID"
 
           # ------------------------------------------------------
-          # Nom Android
+          # strings.xml
           # ------------------------------------------------------
 
           STRINGS_FILE="android/app/src/main/res/values/strings.xml"
@@ -198,7 +208,6 @@ jobs:
             exit 1
           fi
 
-          # Échapper les caractères XML
           XML_NAME=$(printf '%s' "$APP_NAME" \
             | sed \
               -e 's/&/\&amp;/g' \
@@ -207,8 +216,8 @@ jobs:
               -e 's/"/\&quot;/g' \
               -e "s/'/\&apos;/g")
 
-          # Échapper le séparateur sed |
-          XML_NAME=$(printf '%s' "$XML_NAME" | sed 's/|/\\|/g')
+          XML_NAME=$(printf '%s' "$XML_NAME" \
+            | sed 's/|/\\|/g')
 
           if grep -q 'name="app_name"' "$STRINGS_FILE"; then
 
@@ -226,8 +235,41 @@ jobs:
 
           echo "Nom Android configuré : $APP_NAME"
 
+          # ------------------------------------------------------
+          # AndroidManifest.xml
+          # ------------------------------------------------------
+
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+
+          if [ -f "$MANIFEST_FILE" ]; then
+
+            if grep -q 'package="' "$MANIFEST_FILE"; then
+
+              sed -i -E \
+                "s/package=\"[^\"]+\"/package=\"$APPLICATION_ID\"/" \
+                "$MANIFEST_FILE"
+
+              echo "Package du manifeste configuré : $APPLICATION_ID"
+
+            else
+
+              sed -i \
+                "s|<manifest |<manifest package=\"$APPLICATION_ID\" |" \
+                "$MANIFEST_FILE"
+
+              echo "Package ajouté au manifeste : $APPLICATION_ID"
+
+            fi
+
+          else
+
+            echo "ERREUR : AndroidManifest.xml introuvable."
+            exit 1
+
+          fi
+
       # ==========================================================
-      # 10. VÉRIFICATION
+      # 10. VÉRIFIER LA CONFIGURATION
       # ==========================================================
       - name: Vérifier la configuration Android
         env:
@@ -252,7 +294,16 @@ jobs:
           echo ""
           echo "app_name :"
 
-          grep -n "app_name" android/app/src/main/res/values/strings.xml || true
+          grep -n "app_name" \
+            android/app/src/main/res/values/strings.xml \
+            || true
+
+          echo ""
+          echo "package manifest :"
+
+          grep -n "<manifest" \
+            android/app/src/main/AndroidManifest.xml \
+            || true
 
       # ==========================================================
       # 11. PRÉPARER GRADLE
