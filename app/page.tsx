@@ -17,14 +17,15 @@ const STORAGE_KEY = 'simirork_projects';
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
+
   const [showNewProject, setShowNewProject] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] = useState('');
 
   const [prompt, setPrompt] = useState('');
   const [generatedCode, setGeneratedCode] = useState('');
-  const [loading, setLoading] = useState(false);
 
+  const [loading, setLoading] = useState(false);
   const [buildingApk, setBuildingApk] = useState(false);
   const [apkReady, setApkReady] = useState(false);
   const [apkError, setApkError] = useState('');
@@ -34,33 +35,60 @@ export default function Home() {
     'google/gemini-3.6-flash'
   );
 
-  const [activeTab, setActiveTab] = useState<'prompt' | 'preview'>('prompt');
+  const [activeTab, setActiveTab] = useState<'prompt' | 'preview'>(
+    'prompt'
+  );
 
-  // Charger les projets
+  // ============================================================
+  // CHARGEMENT DES PROJETS
+  // ============================================================
+
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
 
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
+    if (!saved) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(saved);
+
+      if (Array.isArray(parsed)) {
         setProjects(parsed);
-      } catch {
-        console.error('Impossible de charger les projets.');
       }
+    } catch (error) {
+      console.error('Impossible de charger les projets.', error);
     }
   }, []);
 
-  // Sauvegarder les projets
+  // ============================================================
+  // SAUVEGARDE DES PROJETS
+  // ============================================================
+
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
   }, [projects]);
 
-  // Créer un projet
+  // ============================================================
+  // RESET APK
+  // ============================================================
+
+  const resetApkState = () => {
+    setApkReady(false);
+    setApkError('');
+    setApkRunId(null);
+    setBuildingApk(false);
+  };
+
+  // ============================================================
+  // CRÉER UN PROJET
+  // ============================================================
+
   const handleCreateProject = () => {
     const name = newName.trim();
 
     if (!name) {
-      alert('Veuillez donner un nom à votre application.');
+      alert("Veuillez donner un nom à votre application.");
       return;
     }
 
@@ -76,9 +104,8 @@ export default function Home() {
       updatedAt: now,
     };
 
-    const updatedProjects = [project, ...projects];
+    setProjects((previous) => [project, ...previous]);
 
-    setProjects(updatedProjects);
     setCurrentProject(project);
     setPrompt('');
     setGeneratedCode('');
@@ -86,33 +113,40 @@ export default function Home() {
     setNewDescription('');
     setShowNewProject(false);
     setActiveTab('prompt');
-    setApkReady(false);
-    setApkError('');
-    setApkRunId(null);
+
+    resetApkState();
   };
 
-  // Ouvrir un projet
+  // ============================================================
+  // OUVRIR UN PROJET
+  // ============================================================
+
   const handleOpenProject = (project: Project) => {
     setCurrentProject(project);
     setPrompt(project.prompt || '');
     setGeneratedCode(project.code || '');
     setActiveTab(project.code ? 'preview' : 'prompt');
-    setApkReady(false);
-    setApkError('');
-    setApkRunId(null);
+
+    resetApkState();
   };
 
-  // Retour aux applications
+  // ============================================================
+  // RETOUR
+  // ============================================================
+
   const handleBackToProjects = () => {
     setCurrentProject(null);
     setPrompt('');
     setGeneratedCode('');
-    setApkReady(false);
-    setApkError('');
-    setApkRunId(null);
+    setActiveTab('prompt');
+
+    resetApkState();
   };
 
-  // Supprimer un projet
+  // ============================================================
+  // SUPPRIMER
+  // ============================================================
+
   const handleDeleteProject = (id: string) => {
     const confirmed = window.confirm(
       'Voulez-vous vraiment supprimer cette application ?'
@@ -122,22 +156,28 @@ export default function Home() {
       return;
     }
 
-    const updatedProjects = projects.filter((project) => project.id !== id);
-
-    setProjects(updatedProjects);
+    setProjects((previous) =>
+      previous.filter((project) => project.id !== id)
+    );
 
     if (currentProject?.id === id) {
       setCurrentProject(null);
       setPrompt('');
       setGeneratedCode('');
-      setApkReady(false);
-      setApkError('');
-      setApkRunId(null);
+      setActiveTab('prompt');
+
+      resetApkState();
     }
   };
 
-  // Sauvegarder le projet après génération
-  const saveCurrentProject = (code: string, projectPrompt: string) => {
+  // ============================================================
+  // SAUVEGARDER LE PROJET
+  // ============================================================
+
+  const saveCurrentProject = (
+    code: string,
+    projectPrompt: string
+  ) => {
     if (!currentProject) {
       return;
     }
@@ -149,18 +189,24 @@ export default function Home() {
       updatedAt: new Date().toISOString(),
     };
 
-    const updatedProjects = projects.map((project) =>
-      project.id === updatedProject.id ? updatedProject : project
+    setProjects((previous) =>
+      previous.map((project) =>
+        project.id === updatedProject.id
+          ? updatedProject
+          : project
+      )
     );
 
-    setProjects(updatedProjects);
     setCurrentProject(updatedProject);
   };
 
-  // Export HTML
+  // ============================================================
+  // EXPORT HTML
+  // ============================================================
+
   const handleExportHTML = () => {
     if (!generatedCode) {
-      alert("Générez d'abord votre application avant de l'exporter.");
+      alert("Générez d'abord votre application.");
       return;
     }
 
@@ -181,7 +227,10 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  // Génération APK Android via GitHub Actions
+  // ============================================================
+  // CONSTRUIRE L'APK
+  // ============================================================
+
   const handleBuildAPK = async () => {
     if (!generatedCode) {
       alert("Générez d'abord votre application.");
@@ -198,7 +247,6 @@ export default function Home() {
     setApkRunId(null);
 
     try {
-      // 1. Lancer le build GitHub
       const response = await fetch('/api/build-apk', {
         method: 'POST',
         headers: {
@@ -214,18 +262,23 @@ export default function Home() {
 
       if (!response.ok || !data.success || !data.runId) {
         throw new Error(
-          data.error || 'Impossible de lancer la construction de l’APK.'
+          data.error ||
+            "Impossible de lancer la construction de l'APK."
         );
       }
 
-      const runId = data.runId;
+      const runId = String(data.runId);
 
-      // 2. Suivre le build jusqu'à sa fin
+      setApkRunId(runId);
+
+      // Suivi du workflow GitHub
       for (let attempt = 0; attempt < 120; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 5000)
+        );
 
         const statusResponse = await fetch(
-          `/api/build-apk/status?runId=${runId}`,
+          `/api/build-apk/status?runId=${encodeURIComponent(runId)}`,
           {
             cache: 'no-store',
           }
@@ -235,49 +288,73 @@ export default function Home() {
 
         if (!statusResponse.ok || !statusData.success) {
           throw new Error(
-            statusData.error || 'Erreur pendant le suivi du build.'
+            statusData.error ||
+              'Erreur pendant le suivi du build.'
           );
         }
 
-        // APK disponible
         if (
           statusData.status === 'completed' &&
           statusData.conclusion === 'success' &&
           statusData.artifactReady
         ) {
-          setApkRunId(String(runId));
           setApkReady(true);
+          setBuildingApk(false);
           return;
         }
 
-        // Build terminé mais en erreur
         if (
           statusData.status === 'completed' &&
           statusData.conclusion !== 'success'
         ) {
           throw new Error(
-            statusData.error || 'Le build Android a échoué.'
+            statusData.error ||
+              "La construction de l'APK a échoué."
           );
         }
       }
 
       throw new Error(
-        'La construction prend trop de temps. Vérifiez le build dans GitHub Actions.'
+        "La construction prend trop de temps. Vérifiez GitHub Actions."
       );
     } catch (error) {
-      console.error('Erreur APK:', error);
+      console.error('Erreur APK :', error);
 
       setApkError(
         error instanceof Error
           ? error.message
-          : 'Erreur pendant la génération de l’APK.'
+          : "Erreur pendant la génération de l'APK."
       );
     } finally {
       setBuildingApk(false);
     }
   };
 
-  // Génération IA
+  // ============================================================
+  // TÉLÉCHARGER L'APK
+  // ============================================================
+
+  const handleDownloadAPK = () => {
+    if (!apkRunId || !currentProject) {
+      return;
+    }
+
+    const appName = encodeURIComponent(
+      currentProject.name
+    );
+
+    const downloadUrl =
+      `/api/build-apk/download?runId=${encodeURIComponent(
+        apkRunId
+      )}&appName=${appName}`;
+
+    window.location.href = downloadUrl;
+  };
+
+  // ============================================================
+  // GÉNÉRATION IA
+  // ============================================================
+
   const handleGenerate = async () => {
     const currentPrompt = prompt.trim();
 
@@ -286,17 +363,17 @@ export default function Home() {
     }
 
     if (!currentProject) {
-      alert("Veuillez d'abord créer ou ouvrir une application.");
+      alert(
+        "Veuillez d'abord créer ou ouvrir une application."
+      );
       return;
     }
 
     setLoading(true);
-    setApkReady(false);
-    setApkError('');
-    setApkRunId(null);
+    resetApkState();
 
     try {
-      const res = await fetch('/api/generate', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -307,20 +384,34 @@ export default function Home() {
         }),
       });
 
-      const data = await res.json();
+      const data = await response.json();
 
-      if (data.code) {
-        setGeneratedCode(data.code);
-
-        saveCurrentProject(data.code, currentPrompt);
-
-        setActiveTab('preview');
-      } else {
-        alert(data.error || 'Erreur lors de la génération.');
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Erreur pendant la génération de l'application."
+        );
       }
+
+      if (!data.code || typeof data.code !== 'string') {
+        throw new Error(
+          "L'IA n'a pas retourné de code d'application."
+        );
+      }
+
+      setGeneratedCode(data.code);
+
+      saveCurrentProject(data.code, currentPrompt);
+
+      setActiveTab('preview');
     } catch (error) {
-      console.error('Erreur génération:', error);
-      alert('Une erreur est survenue pendant la génération.');
+      console.error('Erreur génération :', error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Une erreur est survenue pendant la génération.'
+      );
     } finally {
       setLoading(false);
     }
@@ -329,14 +420,14 @@ export default function Home() {
   const hasPrompt = prompt.trim().length > 0;
 
   // ============================================================
-  // PAGE "MES APPLICATIONS"
+  // PAGE MES APPLICATIONS
   // ============================================================
 
   if (!currentProject) {
     return (
       <main className="min-h-screen bg-gray-950 text-white">
         <header className="border-b border-gray-800 bg-gray-950">
-          <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
+          <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold">
                 S
@@ -356,7 +447,7 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setShowNewProject(true)}
-              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"
+              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
             >
               + Nouvelle application
             </button>
@@ -385,14 +476,14 @@ export default function Home() {
               </h3>
 
               <p className="mt-2 max-w-md text-sm text-gray-500">
-                Créez votre première application pour commencer à utiliser
-                SimiRork.
+                Créez votre première application pour commencer à
+                utiliser SimiRork.
               </p>
 
               <button
                 type="button"
                 onClick={() => setShowNewProject(true)}
-                className="mt-5 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold hover:bg-blue-500"
+                className="mt-5 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold transition hover:bg-blue-500"
               >
                 Créer ma première application
               </button>
@@ -411,8 +502,10 @@ export default function Home() {
 
                     <button
                       type="button"
-                      onClick={() => handleDeleteProject(project.id)}
-                      className="text-xs text-gray-600 hover:text-red-400"
+                      onClick={() =>
+                        handleDeleteProject(project.id)
+                      }
+                      className="text-xs text-gray-600 transition hover:text-red-400"
                     >
                       Supprimer
                     </button>
@@ -423,7 +516,8 @@ export default function Home() {
                   </h3>
 
                   <p className="mt-2 min-h-[40px] text-sm text-gray-500">
-                    {project.description || 'Aucune description'}
+                    {project.description ||
+                      'Aucune description'}
                   </p>
 
                   <p className="mt-3 text-xs text-gray-600">
@@ -435,7 +529,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => handleOpenProject(project)}
-                    className="mt-5 w-full rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold hover:bg-gray-700"
+                    className="mt-5 w-full rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold transition hover:bg-gray-700"
                   >
                     Ouvrir
                   </button>
@@ -456,9 +550,9 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setShowNewProject(false)}
-                  className="text-gray-500 hover:text-white"
+                  className="text-xl text-gray-500 transition hover:text-white"
                 >
-                  ✕
+                  ×
                 </button>
               </div>
 
@@ -468,7 +562,9 @@ export default function Home() {
 
               <input
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
+                onChange={(event) =>
+                  setNewName(event.target.value)
+                }
                 placeholder="Exemple : MonBudget"
                 className="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
               />
@@ -479,7 +575,9 @@ export default function Home() {
 
               <textarea
                 value={newDescription}
-                onChange={(e) => setNewDescription(e.target.value)}
+                onChange={(event) =>
+                  setNewDescription(event.target.value)
+                }
                 placeholder="Décrivez brièvement votre application..."
                 className="mt-2 min-h-[120px] w-full resize-none rounded-xl border border-gray-700 bg-gray-950 p-4 text-sm text-white outline-none focus:border-blue-500"
               />
@@ -487,8 +585,10 @@ export default function Home() {
               <div className="mt-5 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowNewProject(false)}
-                  className="flex-1 rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold hover:bg-gray-700"
+                  onClick={() =>
+                    setShowNewProject(false)
+                  }
+                  className="flex-1 rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold transition hover:bg-gray-700"
                 >
                   Annuler
                 </button>
@@ -496,7 +596,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleCreateProject}
-                  className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold hover:bg-blue-500"
+                  className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold transition hover:bg-blue-500"
                 >
                   Créer
                 </button>
@@ -509,7 +609,7 @@ export default function Home() {
   }
 
   // ============================================================
-  // ÉDITEUR DU PROJET
+  // ÉDITEUR
   // ============================================================
 
   return (
@@ -520,7 +620,7 @@ export default function Home() {
             <button
               type="button"
               onClick={handleBackToProjects}
-              className="rounded-lg px-2 py-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+              className="rounded-lg px-2 py-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
             >
               ←
             </button>
@@ -540,98 +640,146 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <select
+            value={modelVersion}
+            onChange={(event) =>
+              setModelVersion(event.target.value)
+            }
+            className="hidden rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-200 outline-none focus:border-blue-500 sm:block"
+          >
+            <option value="google/gemini-3.6-flash">
+              Gemini 3.6 Flash
+            </option>
+
+            <option value="google/gemini-3.5-flash-lite">
+              Gemini 3.5 Flash Lite
+            </option>
+
+            <option value="google/gemini-2.5-flash-lite">
+              Gemini 2.5 Flash Lite
+            </option>
+
+            <option value="openai/gpt-4o-mini">
+              GPT-4o Mini
+            </option>
+          </select>
+        </div>
+      </header>
+
+      {/* ========================================================
+          BARRE APK
+         ======================================================== */}
+
+      <div className="border-b border-purple-900/60 bg-purple-950/40">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-3 py-3 sm:px-5 md:flex-row md:items-center md:justify-between lg:px-6">
+          <div>
+            <p className="text-sm font-bold text-purple-200 sm:text-base">
+              📱 Application Android
+            </p>
+
+            <p className="mt-1 text-xs text-purple-300/70">
+              {apkReady
+                ? 'Votre APK est prêt à être téléchargé et installé.'
+                : generatedCode
+                  ? 'Transformez cette application en APK utilisable en dehors de SimiRork.'
+                  : "Générez d'abord votre application pour activer la création de l'APK."}
+            </p>
+          </div>
+
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            {!apkReady && (
+              <button
+                type="button"
+                onClick={handleBuildAPK}
+                disabled={!generatedCode || buildingApk}
+                className={`w-full rounded-xl px-5 py-3 text-sm font-bold transition sm:w-auto ${
+                  generatedCode && !buildingApk
+                    ? 'bg-purple-600 text-white shadow-lg hover:bg-purple-500 active:scale-[0.98]'
+                    : 'cursor-not-allowed bg-gray-800 text-gray-600'
+                }`}
+              >
+                {buildingApk
+                  ? '⏳ Création de l’APK...'
+                  : '📱 Créer mon APK'}
+              </button>
+            )}
+
+            {apkReady && apkRunId && (
+              <button
+                type="button"
+                onClick={handleDownloadAPK}
+                className="w-full rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:bg-green-500 active:scale-[0.98] sm:w-auto"
+              >
+                ⬇ Télécharger l’APK
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleExportHTML}
               disabled={!generatedCode}
-              className={`rounded-lg px-3 py-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${
+              className={`w-full rounded-xl px-5 py-3 text-sm font-semibold transition sm:w-auto ${
                 generatedCode
-                  ? 'bg-green-600 text-white hover:bg-green-500'
-                  : 'cursor-not-allowed bg-gray-800 text-gray-600'
+                  ? 'bg-gray-800 text-gray-200 hover:bg-gray-700'
+                  : 'cursor-not-allowed bg-gray-900 text-gray-700'
               }`}
             >
               📦 Exporter HTML
             </button>
-
-            <button
-              type="button"
-              onClick={handleBuildAPK}
-              disabled={!generatedCode || buildingApk}
-              className={`rounded-lg px-3 py-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${
-                generatedCode && !buildingApk
-                  ? 'bg-purple-600 text-white hover:bg-purple-500'
-                  : 'cursor-not-allowed bg-gray-800 text-gray-600'
-              }`}
-            >
-              {buildingApk ? '⏳ Génération APK...' : '📱 Générer APK'}
-            </button>
-
-            <select
-              value={modelVersion}
-              onChange={(e) => setModelVersion(e.target.value)}
-              className="hidden w-[145px] rounded-lg border border-gray-700 bg-gray-900 px-2 py-2 text-xs text-gray-200 outline-none focus:border-blue-500 sm:block sm:w-auto sm:px-3"
-            >
-              <option value="google/gemini-3.6-flash">
-                Gemini 3.6 Flash
-              </option>
-
-              <option value="google/gemini-3.5-flash-lite">
-                Gemini 3.5 Flash Lite
-              </option>
-
-              <option value="google/gemini-2.5-flash-lite">
-                Gemini 2.5 Flash Lite
-              </option>
-
-              <option value="openai/gpt-4o-mini">
-                GPT-4o Mini
-              </option>
-            </select>
           </div>
         </div>
-      </header>
+      </div>
 
-      {apkReady && (
-        <div className="border-b border-green-800 bg-green-950 px-4 py-3">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+      {/* ========================================================
+          APK PRÊT
+         ======================================================== */}
+
+      {apkReady && apkRunId && (
+        <div className="border-b border-green-800 bg-green-950/70 px-4 py-3">
+          <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-green-300">
                 ✅ APK généré avec succès
               </p>
 
-              <p className="text-xs text-green-500">
-                {currentProject.name} est prêt à être installé sur Android.
+              <p className="mt-1 text-xs text-green-400/80">
+                {currentProject.name} est maintenant disponible comme
+                application Android indépendante.
               </p>
             </div>
 
-            <a
-              href={
-                apkRunId
-                  ? `/api/build-apk/download?runId=${apkRunId}`
-                  : '#'
-              }
-              className="rounded-lg bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-500"
+            <button
+              type="button"
+              onClick={handleDownloadAPK}
+              className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-green-500"
             >
-              ⬇ Télécharger l'APK
-            </a>
+              ⬇ Télécharger l’APK
+            </button>
           </div>
         </div>
       )}
 
+      {/* ========================================================
+          ERREUR APK
+         ======================================================== */}
+
       {apkError && (
-        <div className="border-b border-red-800 bg-red-950 px-4 py-3">
+        <div className="border-b border-red-800 bg-red-950/70 px-4 py-3">
           <div className="mx-auto max-w-7xl">
             <p className="text-sm font-semibold text-red-300">
-              ❌ Erreur génération APK
+              ❌ Erreur pendant la création de l’APK
             </p>
 
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-red-400">
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs text-red-400">
               {apkError}
             </pre>
           </div>
         </div>
       )}
+
+      {/* ========================================================
+          ONGLETS MOBILE
+         ======================================================== */}
 
       <div className="border-b border-gray-800 bg-gray-950 md:hidden">
         <div className="grid grid-cols-2">
@@ -661,10 +809,20 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ========================================================
+          CONTENU
+         ======================================================== */}
+
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-5 md:min-h-[calc(100vh-64px)] md:flex-row md:gap-5 md:p-6">
+        {/* ======================================================
+            PANNEAU PROMPT
+           ====================================================== */}
+
         <section
           className={`w-full flex-col rounded-2xl border border-gray-800 bg-gray-900 p-3 shadow-xl sm:p-5 md:w-[38%] ${
-            activeTab === 'prompt' ? 'flex' : 'hidden md:flex'
+            activeTab === 'prompt'
+              ? 'flex'
+              : 'hidden md:flex'
           }`}
         >
           <div className="mb-4 shrink-0">
@@ -679,14 +837,18 @@ export default function Home() {
 
           <textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(event) =>
+              setPrompt(event.target.value)
+            }
             className="min-h-[240px] w-full resize-none rounded-xl border border-gray-700 bg-gray-950 p-4 text-sm leading-6 text-white outline-none placeholder:text-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:min-h-[320px] sm:text-base"
-            placeholder="Exemple : Ajoute une page statistiques..."
+            placeholder="Exemple : Crée une application de gestion de dépenses avec ajout de dépenses, catégories, total mensuel, historique et solde disponible."
           />
 
           <div className="mt-2 text-xs">
             {hasPrompt ? (
-              <span className="text-green-400">Prompt prêt</span>
+              <span className="text-green-400">
+                Prompt prêt
+              </span>
             ) : (
               <span className="text-gray-600">
                 Saisissez votre demande
@@ -713,28 +875,17 @@ export default function Home() {
               'Générer / Modifier'
             )}
           </button>
-
-          {generatedCode && (
-            <button
-              type="button"
-              onClick={handleBuildAPK}
-              disabled={buildingApk}
-              className={`mt-3 min-h-12 w-full rounded-xl px-4 text-sm font-semibold text-white ${
-                buildingApk
-                  ? 'cursor-not-allowed bg-gray-700'
-                  : 'bg-purple-600 hover:bg-purple-500'
-              }`}
-            >
-              {buildingApk
-                ? '⏳ Construction de l’APK...'
-                : '📱 Construire mon APK Android'}
-            </button>
-          )}
         </section>
+
+        {/* ======================================================
+            APERÇU
+           ====================================================== */}
 
         <section
           className={`w-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-800 bg-white shadow-xl ${
-            activeTab === 'preview' ? 'flex' : 'hidden md:flex'
+            activeTab === 'preview'
+              ? 'flex'
+              : 'hidden md:flex'
           }`}
         >
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-gray-50 px-3 sm:px-4">
