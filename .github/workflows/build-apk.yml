@@ -15,6 +15,13 @@ jobs:
       - name: Récupérer le projet
         uses: actions/checkout@v7
 
+      - name: Injecter le HTML généré par SimiRork
+        if: ${{ github.event_name == 'repository_dispatch' }}
+        env:
+          HTML_BASE64: ${{ github.event.client_payload.html_base64 }}
+        run: |
+          printf '%s' "$HTML_BASE64" | base64 --decode > public/index.html
+
       - name: Installer Node.js
         uses: actions/setup-node@v7
         with:
