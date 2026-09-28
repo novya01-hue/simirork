@@ -39,9 +39,6 @@ jobs:
 
           # ------------------------------------------------------
           # Nom du fichier APK
-          # Exemple :
-          # Gestion de dépenses -> gestion-de-depenses.apk
-          # Lavage de voiture   -> lavage-de-voiture.apk
           # ------------------------------------------------------
 
           ASCII_NAME=$(printf '%s' "$APP_NAME" \
@@ -83,8 +80,7 @@ jobs:
 
           PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          # Préfixe "a" obligatoire pour éviter qu'un segment
-          # de package commence par un chiffre.
+          # Le segment commence toujours par une lettre.
           HASH_VALUE=$(printf '%s' "$APP_NAME" \
             | sha256sum \
             | cut -c1-8)
@@ -145,7 +141,7 @@ jobs:
             "build-tools;36.0.0"
 
       # ==========================================================
-      # 7. INSTALLER LES DÉPENDANCES
+      # 7. INSTALLER LES DÉPENDANCES NODE
       # ==========================================================
       - name: Installer les dépendances Node
         run: npm ci
@@ -237,36 +233,28 @@ jobs:
 
           # ------------------------------------------------------
           # AndroidManifest.xml
+          #
+          # IMPORTANT :
+          # Ne jamais définir l'Application ID avec package="..."
+          # dans le manifeste source.
+          # L'Application ID est géré par Gradle.
           # ------------------------------------------------------
 
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
 
-          if [ -f "$MANIFEST_FILE" ]; then
-
-            if grep -q 'package="' "$MANIFEST_FILE"; then
-
-              sed -i -E \
-                "s/package=\"[^\"]+\"/package=\"$APPLICATION_ID\"/" \
-                "$MANIFEST_FILE"
-
-              echo "Package du manifeste configuré : $APPLICATION_ID"
-
-            else
-
-              sed -i \
-                "s|<manifest |<manifest package=\"$APPLICATION_ID\" |" \
-                "$MANIFEST_FILE"
-
-              echo "Package ajouté au manifeste : $APPLICATION_ID"
-
-            fi
-
-          else
-
+          if [ ! -f "$MANIFEST_FILE" ]; then
             echo "ERREUR : AndroidManifest.xml introuvable."
             exit 1
-
           fi
+
+          # Supprimer un éventuel ancien attribut package="..."
+          # pour rester compatible avec les versions modernes
+          # d'Android Gradle Plugin.
+          sed -i -E \
+            's/[[:space:]]+package="[^"]*"//' \
+            "$MANIFEST_FILE"
+
+          echo "AndroidManifest.xml vérifié : aucun attribut package source."
 
       # ==========================================================
       # 10. VÉRIFIER LA CONFIGURATION
@@ -299,11 +287,26 @@ jobs:
             || true
 
           echo ""
-          echo "package manifest :"
+          echo "manifest :"
 
           grep -n "<manifest" \
             android/app/src/main/AndroidManifest.xml \
             || true
+
+          echo ""
+          echo "package= dans le manifeste :"
+
+          if grep -q 'package="' \
+            android/app/src/main/AndroidManifest.xml; then
+
+            echo "ERREUR : package= est encore présent dans AndroidManifest.xml."
+            exit 1
+
+          else
+
+            echo "OK : aucun package= dans AndroidManifest.xml."
+
+          fi
 
       # ==========================================================
       # 11. PRÉPARER GRADLE
@@ -323,7 +326,7 @@ jobs:
           ./gradlew assembleDebug --no-daemon
 
       # ==========================================================
-      # 13. RENOMMER L'APK
+      # 13. PRÉPARER LE FICHIER APK FINAL
       # ==========================================================
       - name: Préparer le fichier APK final
         env:
