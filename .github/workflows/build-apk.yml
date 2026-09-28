@@ -80,7 +80,7 @@ jobs:
 
           PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          # Le segment commence toujours par une lettre.
+          # Segment de hash toujours commençant par une lettre.
           HASH_VALUE=$(printf '%s' "$APP_NAME" \
             | sha256sum \
             | cut -c1-8)
@@ -153,7 +153,719 @@ jobs:
         run: npx cap sync android
 
       # ==========================================================
-      # 9. CONFIGURER L'IDENTITÉ ANDROID
+      # 9. GÉNÉRER L'ICÔNE SPÉCIFIQUE DE L'APPLICATION
+      # ==========================================================
+      - name: Générer l'icône spécifique de l'application
+        env:
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+          import unicodedata
+          from pathlib import Path
+
+          app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
+
+          normalized = unicodedata.normalize("NFKD", app_name)
+          ascii_name = "".join(
+              char for char in normalized
+              if not unicodedata.combining(char)
+          )
+
+          ascii_name = re.sub(
+              r"[^A-Za-z0-9 ]+",
+              " ",
+              ascii_name
+          )
+
+          words = [
+              word.upper()
+              for word in ascii_name.split()
+              if word
+          ]
+
+          letters = re.findall(
+              r"[A-Z]",
+              ascii_name.upper()
+          )
+
+          if len(words) >= 2:
+              initials = words[0][0] + words[1][0]
+          elif len(letters) >= 2:
+              initials = letters[0] + letters[1]
+          elif len(letters) == 1:
+              initials = letters[0] + "A"
+          else:
+              initials = "SR"
+
+          initials = initials[:2]
+
+          palettes = [
+              ("#2563EB", "#93C5FD"),
+              ("#7C3AED", "#C4B5FD"),
+              ("#059669", "#6EE7B7"),
+              ("#DB2777", "#F9A8D4"),
+              ("#EA580C", "#FDBA74"),
+              ("#0891B2", "#67E8F9"),
+              ("#4F46E5", "#A5B4FC"),
+              ("#CA8A04", "#FDE68A"),
+              ("#DC2626", "#FCA5A5"),
+              ("#0F766E", "#99F6E4"),
+          ]
+
+          digest = hashlib.sha256(
+              app_name.encode("utf-8")
+          ).hexdigest()
+
+          palette_index = (
+              int(digest[:8], 16)
+              % len(palettes)
+          )
+
+          background = palettes[palette_index][0]
+          accent = palettes[palette_index][1]
+
+          glyphs = {
+              "A": [
+                  "01110",
+                  "10001",
+                  "10001",
+                  "11111",
+                  "10001",
+                  "10001",
+                  "10001",
+              ],
+              "B": [
+                  "11110",
+                  "10001",
+                  "10001",
+                  "11110",
+                  "10001",
+                  "10001",
+                  "11110",
+              ],
+              "C": [
+                  "01111",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "01111",
+              ],
+              "D": [
+                  "11110",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "11110",
+              ],
+              "E": [
+                  "11111",
+                  "10000",
+                  "10000",
+                  "11110",
+                  "10000",
+                  "10000",
+                  "11111",
+              ],
+              "F": [
+                  "11111",
+                  "10000",
+                  "10000",
+                  "11110",
+                  "10000",
+                  "10000",
+                  "10000",
+              ],
+              "G": [
+                  "01111",
+                  "10000",
+                  "10000",
+                  "10111",
+                  "10001",
+                  "10001",
+                  "01111",
+              ],
+              "H": [
+                  "10001",
+                  "10001",
+                  "10001",
+                  "11111",
+                  "10001",
+                  "10001",
+                  "10001",
+              ],
+              "I": [
+                  "11111",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "11111",
+              ],
+              "J": [
+                  "00111",
+                  "00010",
+                  "00010",
+                  "00010",
+                  "00010",
+                  "10010",
+                  "01100",
+              ],
+              "K": [
+                  "10001",
+                  "10010",
+                  "10100",
+                  "11000",
+                  "10100",
+                  "10010",
+                  "10001",
+              ],
+              "L": [
+                  "10000",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "10000",
+                  "11111",
+              ],
+              "M": [
+                  "10001",
+                  "11011",
+                  "10101",
+                  "10101",
+                  "10001",
+                  "10001",
+                  "10001",
+              ],
+              "N": [
+                  "10001",
+                  "11001",
+                  "10101",
+                  "10011",
+                  "10001",
+                  "10001",
+                  "10001",
+              ],
+              "O": [
+                  "01110",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "01110",
+              ],
+              "P": [
+                  "11110",
+                  "10001",
+                  "10001",
+                  "11110",
+                  "10000",
+                  "10000",
+                  "10000",
+              ],
+              "Q": [
+                  "01110",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10101",
+                  "10010",
+                  "01101",
+              ],
+              "R": [
+                  "11110",
+                  "10001",
+                  "10001",
+                  "11110",
+                  "10100",
+                  "10010",
+                  "10001",
+              ],
+              "S": [
+                  "01111",
+                  "10000",
+                  "10000",
+                  "01110",
+                  "00001",
+                  "00001",
+                  "11110",
+              ],
+              "T": [
+                  "11111",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+              ],
+              "U": [
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "01110",
+              ],
+              "V": [
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10001",
+                  "01010",
+                  "01010",
+                  "00100",
+              ],
+              "W": [
+                  "10001",
+                  "10001",
+                  "10001",
+                  "10101",
+                  "10101",
+                  "11011",
+                  "10001",
+              ],
+              "X": [
+                  "10001",
+                  "01010",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "01010",
+                  "10001",
+              ],
+              "Y": [
+                  "10001",
+                  "01010",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+                  "00100",
+              ],
+              "Z": [
+                  "11111",
+                  "00001",
+                  "00010",
+                  "00100",
+                  "01000",
+                  "10000",
+                  "11111",
+              ],
+          }
+
+          res = Path(
+              "android/app/src/main/res"
+          )
+
+          drawable_dir = res / "drawable"
+          mipmap_anydpi = (
+              res / "mipmap-anydpi-v26"
+          )
+          values_dir = res / "values"
+
+          drawable_dir.mkdir(
+              parents=True,
+              exist_ok=True
+          )
+
+          mipmap_anydpi.mkdir(
+              parents=True,
+              exist_ok=True
+          )
+
+          values_dir.mkdir(
+              parents=True,
+              exist_ok=True
+          )
+
+          # ------------------------------------------------------
+          # Générer les rectangles des lettres pour SVG
+          # ------------------------------------------------------
+
+          def svg_letter_rects(
+              text,
+              x,
+              y,
+              scale,
+              fill
+          ):
+              output = []
+
+              gap = scale
+
+              for index, char in enumerate(text):
+                  pattern = glyphs.get(char)
+
+                  if not pattern:
+                      continue
+
+                  offset_x = x + index * (
+                      5 * scale + gap
+                  )
+
+                  for row, line in enumerate(pattern):
+                      for col, cell in enumerate(line):
+                          if cell != "1":
+                              continue
+
+                          px = (
+                              offset_x
+                              + col * scale
+                          )
+                          py = (
+                              y
+                              + row * scale
+                          )
+
+                          output.append(
+                              f'<rect x="{px:g}" '
+                              f'y="{py:g}" '
+                              f'width="{scale:g}" '
+                              f'height="{scale:g}" '
+                              f'rx="{scale * 0.16:g}" '
+                              f'fill="{fill}"/>'
+                          )
+
+              return "\n".join(output)
+
+          # ------------------------------------------------------
+          # SVG complet carré
+          # ------------------------------------------------------
+
+          full_letters = svg_letter_rects(
+              initials,
+              370,
+              370,
+              42,
+              "#FFFFFF"
+          )
+
+          full_svg = f"""<svg xmlns="http://www.w3.org/2000/svg"
+          width="1024"
+          height="1024"
+          viewBox="0 0 1024 1024">
+          <rect width="1024"
+                height="1024"
+                rx="190"
+                fill="{background}"/>
+          <circle cx="512"
+                  cy="512"
+                  r="330"
+                  fill="#FFFFFF"
+                  opacity="0.08"/>
+          <rect x="760"
+                y="150"
+                width="86"
+                height="86"
+                rx="26"
+                fill="{accent}"/>
+          {full_letters}
+          </svg>"""
+
+          # ------------------------------------------------------
+          # SVG rond pour ic_launcher_round
+          # ------------------------------------------------------
+
+          round_svg = f"""<svg xmlns="http://www.w3.org/2000/svg"
+          width="1024"
+          height="1024"
+          viewBox="0 0 1024 1024">
+          <circle cx="512"
+                  cy="512"
+                  r="512"
+                  fill="{background}"/>
+          <circle cx="512"
+                  cy="512"
+                  r="330"
+                  fill="#FFFFFF"
+                  opacity="0.08"/>
+          <circle cx="800"
+                  cy="190"
+                  r="42"
+                  fill="{accent}"/>
+          {full_letters}
+          </svg>"""
+
+          Path(
+              "generated-app-icon.svg"
+          ).write_text(
+              full_svg,
+              encoding="utf-8"
+          )
+
+          Path(
+              "generated-app-icon-round.svg"
+          ).write_text(
+              round_svg,
+              encoding="utf-8"
+          )
+
+          # ------------------------------------------------------
+          # Couleur de fond Android
+          # ------------------------------------------------------
+
+          colors_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="app_icon_background">{background}</color>
+          </resources>
+          """
+
+          (values_dir / "app_icon_colors.xml").write_text(
+              colors_xml,
+              encoding="utf-8"
+          )
+
+          # ------------------------------------------------------
+          # Background adaptatif
+          # ------------------------------------------------------
+
+          background_xml = """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+
+              <path
+                  android:fillColor="@color/app_icon_background"
+                  android:pathData="M0,0H108V108H0Z" />
+          </vector>
+          """
+
+          (
+              drawable_dir /
+              "ic_launcher_background.xml"
+          ).write_text(
+              background_xml,
+              encoding="utf-8"
+          )
+
+          # ------------------------------------------------------
+          # Fonction pathData pour les lettres
+          # ------------------------------------------------------
+
+          def vector_letter_paths(
+              text,
+              x,
+              y,
+              scale,
+              fill
+          ):
+              paths = []
+
+              gap = scale
+
+              for index, char in enumerate(text):
+                  pattern = glyphs.get(char)
+
+                  if not pattern:
+                      continue
+
+                  offset_x = x + index * (
+                      5 * scale + gap
+                  )
+
+                  for row, line in enumerate(pattern):
+                      for col, cell in enumerate(line):
+                          if cell != "1":
+                              continue
+
+                          left = (
+                              offset_x
+                              + col * scale
+                          )
+                          top = (
+                              y
+                              + row * scale
+                          )
+                          right = left + scale
+                          bottom = top + scale
+
+                          path = (
+                              f"M{left:g},{top:g}"
+                              f"H{right:g}"
+                              f"V{bottom:g}"
+                              f"H{left:g}Z"
+                          )
+
+                          paths.append(
+                              f"""    <path
+                  android:fillColor="{fill}"
+                  android:pathData="{path}" />"""
+                          )
+
+              return "\n".join(paths)
+
+          # ------------------------------------------------------
+          # Foreground adaptatif
+          # ------------------------------------------------------
+
+          vector_letters = vector_letter_paths(
+              initials,
+              25,
+              35,
+              5.2,
+              "#FFFFFFFF"
+          )
+
+          accent_path = """
+              <path
+                  android:fillColor="%s"
+                  android:pathData="M78,22 H86 V30 H78 Z" />
+          """ % accent
+
+          foreground_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+
+          {accent_path}
+
+          {vector_letters}
+
+          </vector>
+          """
+
+          (
+              drawable_dir /
+              "ic_launcher_foreground.xml"
+          ).write_text(
+              foreground_xml,
+              encoding="utf-8"
+          )
+
+          # ------------------------------------------------------
+          # Monochrome
+          # ------------------------------------------------------
+
+          monochrome_letters = vector_letter_paths(
+              initials,
+              25,
+              35,
+              5.2,
+              "#FFFFFFFF"
+          )
+
+          monochrome_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+
+          {monochrome_letters}
+
+          </vector>
+          """
+
+          (
+              drawable_dir /
+              "ic_launcher_monochrome.xml"
+          ).write_text(
+              monochrome_xml,
+              encoding="utf-8"
+          )
+
+          # ------------------------------------------------------
+          # Icônes adaptatives
+          # ------------------------------------------------------
+
+          adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+              <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+          </adaptive-icon>
+          """
+
+          (
+              mipmap_anydpi /
+              "ic_launcher.xml"
+          ).write_text(
+              adaptive_xml,
+              encoding="utf-8"
+          )
+
+          (
+              mipmap_anydpi /
+              "ic_launcher_round.xml"
+          ).write_text(
+              adaptive_xml,
+              encoding="utf-8"
+          )
+
+          print("==========================================")
+          print("ICÔNE APPLICATION")
+          print("==========================================")
+          print(f"Application : {app_name}")
+          print(f"Initiales   : {initials}")
+          print(f"Couleur     : {background}")
+          print(f"Accent      : {accent}")
+          print("==========================================")
+          PY
+
+          # ------------------------------------------------------
+          # PNG LEGACY POUR LES ANCIENS ANDROID
+          # ------------------------------------------------------
+
+          if command -v magick >/dev/null 2>&1; then
+            ICON_TOOL="magick"
+          elif command -v convert >/dev/null 2>&1; then
+            ICON_TOOL="convert"
+          else
+            echo "ImageMagick absent : installation..."
+            sudo apt-get update
+            sudo apt-get install -y imagemagick
+
+            if command -v magick >/dev/null 2>&1; then
+              ICON_TOOL="magick"
+            else
+              ICON_TOOL="convert"
+            fi
+          fi
+
+          declare -A ICON_SIZES=(
+            [mdpi]=48
+            [hdpi]=72
+            [xhdpi]=96
+            [xxhdpi]=144
+            [xxxhdpi]=192
+          )
+
+          for density in "${!ICON_SIZES[@]}"; do
+            size="${ICON_SIZES[$density]}"
+
+            mkdir -p \
+              "android/app/src/main/res/mipmap-${density}"
+
+            "$ICON_TOOL" \
+              generated-app-icon.svg \
+              -resize "${size}x${size}" \
+              "android/app/src/main/res/mipmap-${density}/ic_launcher.png"
+
+            "$ICON_TOOL" \
+              generated-app-icon-round.svg \
+              -resize "${size}x${size}" \
+              "android/app/src/main/res/mipmap-${density}/ic_launcher_round.png"
+          done
+
+          echo "Icônes PNG générées."
+
+      # ==========================================================
+      # 10. CONFIGURER L'IDENTITÉ ANDROID
       # ==========================================================
       - name: Configurer l'identité Android
         env:
@@ -235,9 +947,7 @@ jobs:
           # AndroidManifest.xml
           #
           # IMPORTANT :
-          # Ne jamais définir l'Application ID avec package="..."
-          # dans le manifeste source.
-          # L'Application ID est géré par Gradle.
+          # Aucun package="..." ne doit être ajouté.
           # ------------------------------------------------------
 
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
@@ -247,17 +957,14 @@ jobs:
             exit 1
           fi
 
-          # Supprimer un éventuel ancien attribut package="..."
-          # pour rester compatible avec les versions modernes
-          # d'Android Gradle Plugin.
           sed -i -E \
             's/[[:space:]]+package="[^"]*"//' \
             "$MANIFEST_FILE"
 
-          echo "AndroidManifest.xml vérifié : aucun attribut package source."
+          echo "AndroidManifest.xml vérifié."
 
       # ==========================================================
-      # 10. VÉRIFIER LA CONFIGURATION
+      # 11. VÉRIFIER LA CONFIGURATION
       # ==========================================================
       - name: Vérifier la configuration Android
         env:
@@ -276,8 +983,13 @@ jobs:
           echo ""
           echo "applicationId :"
 
-          grep -n "applicationId" android/app/build.gradle 2>/dev/null || true
-          grep -n "applicationId" android/app/build.gradle.kts 2>/dev/null || true
+          grep -n "applicationId" \
+            android/app/build.gradle \
+            2>/dev/null || true
+
+          grep -n "applicationId" \
+            android/app/build.gradle.kts \
+            2>/dev/null || true
 
           echo ""
           echo "app_name :"
@@ -299,7 +1011,7 @@ jobs:
           if grep -q 'package="' \
             android/app/src/main/AndroidManifest.xml; then
 
-            echo "ERREUR : package= est encore présent dans AndroidManifest.xml."
+            echo "ERREUR : package= est encore présent."
             exit 1
 
           else
@@ -308,8 +1020,35 @@ jobs:
 
           fi
 
+          echo ""
+          echo "ic_launcher :"
+
+          ls -lh \
+            android/app/src/main/res/mipmap-mdpi/ic_launcher.png \
+            android/app/src/main/res/mipmap-hdpi/ic_launcher.png \
+            android/app/src/main/res/mipmap-xhdpi/ic_launcher.png \
+            android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png \
+            android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          echo ""
+          echo "ic_launcher_round :"
+
+          ls -lh \
+            android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png \
+            android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png \
+            android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png \
+            android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png \
+            android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+          echo ""
+          echo "Icône adaptative :"
+
+          ls -lh \
+            android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml \
+            android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
       # ==========================================================
-      # 11. PRÉPARER GRADLE
+      # 12. PRÉPARER GRADLE
       # ==========================================================
       - name: Préparer Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -318,7 +1057,7 @@ jobs:
         run: chmod +x android/gradlew
 
       # ==========================================================
-      # 12. CONSTRUIRE L'APK
+      # 13. CONSTRUIRE L'APK
       # ==========================================================
       - name: Construire l'APK
         working-directory: android
@@ -326,7 +1065,7 @@ jobs:
           ./gradlew assembleDebug --no-daemon
 
       # ==========================================================
-      # 13. PRÉPARER LE FICHIER APK FINAL
+      # 14. PRÉPARER LE FICHIER APK FINAL
       # ==========================================================
       - name: Préparer le fichier APK final
         env:
@@ -342,7 +1081,7 @@ jobs:
           ls -lh generated-apk/
 
       # ==========================================================
-      # 14. PUBLIER L'APK
+      # 15. PUBLIER L'APK
       # ==========================================================
       - name: Publier l'APK
         uses: actions/upload-artifact@v6
