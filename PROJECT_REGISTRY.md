@@ -949,3 +949,307 @@ Dernier correctif workflow
 > **Le pipeline de génération et téléchargement d’APK individuel depuis SimiRork est fonctionnel.**
 >
 > Lorsqu’un nouveau problème apparaît, commencer par le dernier commit fonctionnel, le dernier Run ID et ce registre avant toute nouvelle modification.
+
+## 36. Système de crédits — tarification par coût réel OpenRouter
+
+### Mise en place validée le 2026-09-29
+
+La tarification provisoire basée sur les tokens :
+
+```text
+1 crédit = 1 000 tokens
+```
+
+a été remplacée pour les nouvelles générations par une conversion basée sur le **coût réel retourné par OpenRouter**.
+
+### Configuration
+
+Variable d'environnement Production Vercel :
+
+```text
+SIMIRORK_CREDIT_VALUE_USD=0.005
+```
+
+Règle actuelle :
+
+```text
+1 crédit SimiRork = $0.005 de coût OpenRouter
+```
+
+Calcul :
+
+```text
+creditsExact = coût OpenRouter / 0.005
+creditsUsed = arrondi supérieur de creditsExact
+```
+
+### API
+
+Fichier :
+
+```text
+app/api/generate/route.ts
+```
+
+La requête OpenRouter utilise :
+
+```ts
+usage: {
+  include: true,
+}
+```
+
+Les informations suivantes sont récupérées :
+
+```text
+promptTokens
+completionTokens
+totalTokens
+cost
+```
+
+La réponse API SimiRork renvoie également :
+
+```text
+creditValueUsd
+creditsExact
+creditsUsed
+billingMethod
+billingVersion
+```
+
+Version de facturation actuelle :
+
+```text
+cost-v1
+```
+
+Méthode :
+
+```text
+openrouter_cost
+```
+
+### Interface
+
+Fichier :
+
+```text
+app/page.tsx
+```
+
+L'historique enregistre désormais :
+
+```text
+Coût OpenRouter
+Valeur du crédit
+Crédit exact
+Crédits utilisés
+Solde après génération
+Méthode de facturation
+Version de facturation
+```
+
+Le frontend ne recalcule plus les crédits à partir du nombre de tokens.
+
+### Test local validé
+
+Génération de référence :
+
+```text
+Tokens : 9 923
+Coût : $0.036614
+Valeur crédit : $0.005000
+Crédit exact : 7.3228
+Crédits consommés : 8
+Solde : 72
+```
+
+Calcul vérifié :
+
+```text
+0.036614 / 0.005 = 7.3228
+arrondi supérieur = 8 crédits
+```
+
+### Déploiement Production validé
+
+La variable `SIMIRORK_CREDIT_VALUE_USD` a été ajoutée à l'environnement **Production** du projet Vercel `debutant2/simirork`.
+
+Déploiement validé :
+
+```text
+https://simirork.vercel.app
+```
+
+Résultat du test Production :
+
+```text
+Tokens : 11 831
+Coût : $0.043841
+Tarif : $0.005000
+Crédit exact : 8.7683
+Crédits consommés : 9
+Solde : 91
+Méthode : Coût réel
+```
+
+Calcul vérifié :
+
+```text
+0.043841 / 0.005 = 8.7682...
+arrondi supérieur = 9 crédits
+100 - 9 = 91 crédits
+```
+
+### Important
+
+Le solde et l'historique restent actuellement stockés dans `localStorage` :
+
+```text
+simirork_credits
+simirork_usage_history
+```
+
+Ce stockage est adapté au prototype/test mais **ne constitue pas encore un système de crédits sécurisé pour un service commercial**.
+
+### Prochaine évolution prévue
+
+Passer les crédits et l'historique vers un stockage serveur associé à un utilisateur/authentification afin d'éviter qu'un utilisateur puisse modifier son solde directement depuis son navigateur.
+
+## 37. Validation finale — 2026-09-29
+
+### Build local
+
+Commande :
+
+```powershell
+npm.cmd run build
+```
+
+Résultat :
+
+```text
+✓ Compiled successfully
+✓ Finished TypeScript
+✓ Collecting page data
+✓ Generating static pages
+✓ Finalizing page optimization
+```
+
+Le build de production Next.js est validé.
+
+### Environnement Vercel Production
+
+Variable ajoutée :
+
+```text
+SIMIRORK_CREDIT_VALUE_USD=0.005
+```
+
+Déploiement :
+
+```text
+https://simirork.vercel.app
+```
+
+Déploiement inspecté :
+
+```text
+https://vercel.com/debutant2/simirork/31PCrspARsf3yoqQyt3QxQvcLKy4
+```
+
+URL de déploiement générée :
+
+```text
+https://simirork-9sk971q8s-debutant2.vercel.app
+```
+
+Résultat :
+
+```text
+✓ Ready in 44s
+✓ Aliased vers https://simirork.vercel.app
+```
+
+### Test fonctionnel Production
+
+Résultat observé directement dans SimiRork :
+
+```text
+Dernière génération : 9 crédits
+Tokens : 11 831
+Coût : $0.043841
+Tarif : $0.005000
+Crédit exact : 8.7683
+Solde : 91
+Méthode : Coût réel
+Prompt : 13 mots / 78 caractères
+```
+
+Calcul :
+
+```text
+0.043841 / 0.005 = 8.7682
+arrondi supérieur = 9 crédits
+100 - 9 = 91 crédits
+```
+
+### Conclusion
+
+```text
+✅ Coût réel OpenRouter récupéré
+✅ Conversion coût → crédits fonctionnelle
+✅ Solde débité correctement
+✅ Historique enrichi
+✅ Variable de tarification disponible en Production
+✅ Fonctionnement validé localement
+✅ Fonctionnement validé sur Vercel
+```
+
+## 38. Phase suivante — sécurisation réelle des crédits
+
+État actuel :
+
+```text
+Prototype fonctionnel
+```
+
+Stockage actuel :
+
+```text
+localStorage
+simirork_credits
+simirork_usage_history
+```
+
+Limite :
+
+```text
+Le solde peut être modifié côté navigateur.
+```
+
+Objectif de la prochaine phase :
+
+```text
+Utilisateur authentifié
+        ↓
+Base de données serveur
+        ↓
+Solde officiel
+        ↓
+Validation serveur avant génération
+        ↓
+Appel OpenRouter
+        ↓
+Réception du coût réel
+        ↓
+Débit serveur atomique
+        ↓
+Historique serveur
+```
+
+Règle :
+
+**Le navigateur ne devra plus être la source de vérité du solde.**
+
