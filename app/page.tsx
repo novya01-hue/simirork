@@ -17,7 +17,38 @@ type Project = {
   apkError?: string;
 };
 
+type CreditState = {
+  balance: number;
+  consumed: number;
+};
+
+type GenerationUsage = {
+  id: string;
+  createdAt: string;
+  projectId: string;
+  projectName: string;
+  model: string;
+  promptWords: number;
+  promptChars: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+  creditsUsed: number;
+
+  // Nouvelles informations de facturation
+  creditValueUsd?: number;
+  creditsExact?: number;
+  billingMethod?: string;
+  billingVersion?: string;
+  balanceAfter?: number;
+};
+
 const STORAGE_KEY = 'simirork_projects';
+const CREDITS_KEY = 'simirork_credits';
+const USAGE_HISTORY_KEY = 'simirork_usage_history';
+
+const INITIAL_CREDITS = 100;
 
 function normalizeProject(project: Project): Project {
   return {
@@ -40,6 +71,61 @@ function createSafeFileBaseName(name: string): string {
   return words.join('-') || 'simirork-app';
 }
 
+function countWords(text: string): number {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return 0;
+  }
+
+  return trimmed.split(/\s+/).length;
+}
+
+function formatCost(cost: number): string {
+  if (!Number.isFinite(cost) || cost <= 0) {
+    return 'Non communiqué';
+  }
+
+  return `$${cost.toFixed(6)}`;
+}
+
+function formatCreditValue(value?: number): string {
+  if (
+    value === undefined ||
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    return '—';
+  }
+
+  return `$${value.toFixed(6)}`;
+}
+
+function formatCreditsExact(value?: number): string {
+  if (
+    value === undefined ||
+    !Number.isFinite(value) ||
+    value < 0
+  ) {
+    return '—';
+  }
+
+  return value.toFixed(4);
+}
+
+function formatModel(model: string): string {
+  const names: Record<string, string> = {
+    'google/gemini-3.6-flash': 'Gemini 3.6 Flash',
+    'google/gemini-3.5-flash-lite':
+      'Gemini 3.5 Flash Lite',
+    'google/gemini-2.5-flash-lite':
+      'Gemini 2.5 Flash Lite',
+    'openai/gpt-4o-mini': 'GPT-4o Mini',
+  };
+
+  return names[model] || model;
+}
+
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProject, setCurrentProject] =
@@ -48,8 +134,24 @@ export default function Home() {
   const [storageLoaded, setStorageLoaded] =
     useState(false);
 
+  const [creditState, setCreditState] =
+    useState<CreditState>({
+      balance: INITIAL_CREDITS,
+      consumed: 0,
+    });
+
+  const [usageHistory, setUsageHistory] =
+    useState<GenerationUsage[]>([]);
+
+  const [showHistory, setShowHistory] =
+    useState(false);
+
+  const [lastUsage, setLastUsage] =
+    useState<GenerationUsage | null>(null);
+
   const [showNewProject, setShowNewProject] =
     useState(false);
+
   const [newName, setNewName] = useState('');
   const [newDescription, setNewDescription] =
     useState('');
@@ -73,45 +175,85 @@ export default function Home() {
   );
 
   // ============================================================
-  // CHARGEMENT DES PROJETS
+  // CHARGEMENT
   // ============================================================
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const savedProjects =
+      localStorage.getItem(STORAGE_KEY);
 
-    if (!saved) {
-      setStorageLoaded(true);
-      return;
-    }
+    if (savedProjects) {
+      try {
+        const parsed = JSON.parse(savedProjects);
 
-    try {
-      const parsed = JSON.parse(saved);
-
-      if (Array.isArray(parsed)) {
-        setProjects(
-          parsed.map((project) =>
-            normalizeProject(project)
-          )
+        if (Array.isArray(parsed)) {
+          setProjects(
+            parsed.map((project) =>
+              normalizeProject(project)
+            )
+          );
+        }
+      } catch (error) {
+        console.error(
+          'Impossible de charger les projets.',
+          error
         );
       }
-    } catch (error) {
-      console.error(
-        'Impossible de charger les projets.',
-        error
-      );
-    } finally {
-      setStorageLoaded(true);
     }
+
+    const savedCredits =
+      localStorage.getItem(CREDITS_KEY);
+
+    if (savedCredits) {
+      try {
+        const parsed = JSON.parse(savedCredits);
+
+        if (
+          typeof parsed?.balance === 'number' &&
+          typeof parsed?.consumed === 'number'
+        ) {
+          setCreditState({
+            balance: parsed.balance,
+            consumed: parsed.consumed,
+          });
+        }
+      } catch (error) {
+        console.error(
+          'Impossible de charger les crédits.',
+          error
+        );
+      }
+    }
+
+    const savedHistory =
+      localStorage.getItem(
+        USAGE_HISTORY_KEY
+      );
+
+    if (savedHistory) {
+      try {
+        const parsed = JSON.parse(savedHistory);
+
+        if (Array.isArray(parsed)) {
+          setUsageHistory(parsed);
+        }
+      } catch (error) {
+        console.error(
+          "Impossible de charger l'historique.",
+          error
+        );
+      }
+    }
+
+    setStorageLoaded(true);
   }, []);
 
   // ============================================================
-  // SAUVEGARDE DES PROJETS
+  // SAUVEGARDE
   // ============================================================
 
   useEffect(() => {
-    if (!storageLoaded) {
-      return;
-    }
+    if (!storageLoaded) return;
 
     localStorage.setItem(
       STORAGE_KEY,
@@ -119,8 +261,26 @@ export default function Home() {
     );
   }, [projects, storageLoaded]);
 
+  useEffect(() => {
+    if (!storageLoaded) return;
+
+    localStorage.setItem(
+      CREDITS_KEY,
+      JSON.stringify(creditState)
+    );
+  }, [creditState, storageLoaded]);
+
+  useEffect(() => {
+    if (!storageLoaded) return;
+
+    localStorage.setItem(
+      USAGE_HISTORY_KEY,
+      JSON.stringify(usageHistory)
+    );
+  }, [usageHistory, storageLoaded]);
+
   // ============================================================
-  // MISE À JOUR D'UN PROJET
+  // PROJET
   // ============================================================
 
   const updateProject = (
@@ -149,7 +309,7 @@ export default function Home() {
   };
 
   // ============================================================
-  // SUIVI DU BUILD APK
+  // APK
   // ============================================================
 
   const startApkPolling = async (
@@ -241,14 +401,8 @@ export default function Home() {
     }
   };
 
-  // ============================================================
-  // REPRISE DES BUILDS EN COURS
-  // ============================================================
-
   useEffect(() => {
-    if (!storageLoaded) {
-      return;
-    }
+    if (!storageLoaded) return;
 
     projects.forEach((project) => {
       if (
@@ -264,7 +418,7 @@ export default function Home() {
   }, [projects, storageLoaded]);
 
   // ============================================================
-  // CRÉER UN PROJET
+  // CRÉER
   // ============================================================
 
   const handleCreateProject = () => {
@@ -304,10 +458,11 @@ export default function Home() {
     setNewDescription('');
     setShowNewProject(false);
     setActiveTab('prompt');
+    setLastUsage(null);
   };
 
   // ============================================================
-  // OUVRIR UN PROJET
+  // OUVRIR
   // ============================================================
 
   const handleOpenProject = (
@@ -317,16 +472,26 @@ export default function Home() {
       normalizeProject(project);
 
     setCurrentProject(normalizedProject);
+
     setPrompt(
       normalizedProject.prompt || ''
     );
+
     setGeneratedCode(
       normalizedProject.code || ''
     );
+
     setActiveTab(
       normalizedProject.code
         ? 'preview'
         : 'prompt'
+    );
+
+    setLastUsage(
+      usageHistory.find(
+        (usage) =>
+          usage.projectId === normalizedProject.id
+      ) || null
     );
   };
 
@@ -339,6 +504,7 @@ export default function Home() {
     setPrompt('');
     setGeneratedCode('');
     setActiveTab('prompt');
+    setLastUsage(null);
   };
 
   // ============================================================
@@ -352,9 +518,7 @@ export default function Home() {
       'Voulez-vous vraiment supprimer cette application ?'
     );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     setProjects((previous) =>
       previous.filter(
@@ -367,29 +531,25 @@ export default function Home() {
       setPrompt('');
       setGeneratedCode('');
       setActiveTab('prompt');
+      setLastUsage(null);
     }
   };
 
   // ============================================================
-  // SAUVEGARDER LE PROJET
+  // SAUVEGARDER
   // ============================================================
 
   const saveCurrentProject = (
     code: string,
     projectPrompt: string
   ) => {
-    if (!currentProject) {
-      return;
-    }
+    if (!currentProject) return;
 
     const updatedProject: Project = {
       ...currentProject,
       prompt: projectPrompt,
       code,
       updatedAt: new Date().toISOString(),
-
-      // Le code a changé :
-      // l'ancien APK n'est plus considéré comme à jour.
       apkStatus: 'none',
       apkRunId: null,
       apkError: '',
@@ -450,7 +610,7 @@ export default function Home() {
   };
 
   // ============================================================
-  // CONSTRUIRE L'APK
+  // APK
   // ============================================================
 
   const handleBuildAPK = async (
@@ -542,7 +702,7 @@ export default function Home() {
   };
 
   // ============================================================
-  // TÉLÉCHARGER L'APK
+  // TÉLÉCHARGER APK
   // ============================================================
 
   const handleDownloadAPK = (
@@ -568,7 +728,7 @@ export default function Home() {
   };
 
   // ============================================================
-  // GÉNÉRATION IA
+  // GÉNÉRATION IA + CRÉDITS
   // ============================================================
 
   const handleGenerate = async () => {
@@ -582,6 +742,13 @@ export default function Home() {
     if (!currentProject) {
       alert(
         "Veuillez d'abord créer ou ouvrir une application."
+      );
+      return;
+    }
+
+    if (creditState.balance <= 0) {
+      alert(
+        "Votre solde de crédits est épuisé."
       );
       return;
     }
@@ -622,12 +789,117 @@ export default function Home() {
         );
       }
 
+      const usage = data.usage || {};
+
+      const promptTokens =
+        Number(usage.promptTokens) || 0;
+
+      const completionTokens =
+        Number(usage.completionTokens) || 0;
+
+      const totalTokens =
+        Number(usage.totalTokens) ||
+        promptTokens + completionTokens;
+
+      const creditsUsed =
+        Number(usage.creditsUsed);
+
+      const cost =
+        Number(usage.cost) || 0;
+
+      const creditValueUsd =
+        Number(usage.creditValueUsd) || 0;
+
+      const creditsExact =
+        Number(usage.creditsExact);
+
+      const billingMethod =
+        typeof usage.billingMethod === 'string'
+          ? usage.billingMethod
+          : '';
+
+      const billingVersion =
+        typeof usage.billingVersion === 'string'
+          ? usage.billingVersion
+          : '';
+
+      /*
+       * Le frontend n'effectue plus aucun calcul
+       * de crédits à partir des tokens.
+       *
+       * La valeur officielle vient maintenant
+       * directement de /api/generate.
+       */
+      if (
+        !Number.isFinite(creditsUsed) ||
+        creditsUsed < 0
+      ) {
+        throw new Error(
+          'La consommation de crédits retournée par le serveur est invalide.'
+        );
+      }
+
+      const balanceAfterGeneration =
+        Math.max(
+          0,
+          creditState.balance - creditsUsed
+        );
+
+      const generationUsage: GenerationUsage = {
+        id: crypto.randomUUID(),
+        createdAt:
+          new Date().toISOString(),
+        projectId: currentProject.id,
+        projectName: currentProject.name,
+        model: modelVersion,
+        promptWords:
+          countWords(currentPrompt),
+        promptChars:
+          currentPrompt.length,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        cost,
+        creditsUsed,
+        creditValueUsd:
+          Number.isFinite(creditValueUsd) &&
+          creditValueUsd > 0
+            ? creditValueUsd
+            : undefined,
+        creditsExact:
+          Number.isFinite(creditsExact) &&
+          creditsExact >= 0
+            ? creditsExact
+            : undefined,
+        billingMethod,
+        billingVersion,
+        balanceAfter:
+          balanceAfterGeneration,
+      };
+
       setGeneratedCode(data.code);
 
       saveCurrentProject(
         data.code,
         currentPrompt
       );
+
+      setLastUsage(generationUsage);
+
+      setUsageHistory((previous) => [
+        generationUsage,
+        ...previous,
+      ]);
+
+      setCreditState((previous) => ({
+        balance: Math.max(
+          0,
+          previous.balance - creditsUsed
+        ),
+        consumed:
+          previous.consumed +
+          creditsUsed,
+      }));
 
       setActiveTab('preview');
     } catch (error) {
@@ -646,8 +918,22 @@ export default function Home() {
     }
   };
 
+  // ============================================================
+  // INFORMATIONS PROMPT
+  // ============================================================
+
+  const promptWords =
+    countWords(prompt);
+
+  const promptChars =
+    prompt.length;
+
   const hasPrompt =
     prompt.trim().length > 0;
+
+  // ============================================================
+  // APK LABEL
+  // ============================================================
 
   const getApkLabel = (
     project: Project
@@ -694,28 +980,62 @@ export default function Home() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                setShowNewProject(true)
-              }
-              className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
-            >
-              + Nouvelle application
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setShowHistory(true)
+                }
+                className="rounded-xl border border-gray-800 bg-gray-900 px-3 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-gray-800 sm:px-4 sm:text-sm"
+              >
+                Historique
+              </button>
+
+              <div className="hidden rounded-xl border border-blue-900 bg-blue-950/50 px-3 py-2 text-xs font-semibold text-blue-300 sm:block">
+                {creditState.balance} crédits
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowNewProject(true)
+                }
+                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
+              >
+                + Nouvelle application
+              </button>
+            </div>
           </div>
         </header>
 
         <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
           <div className="mb-8">
-            <h2 className="text-2xl font-bold sm:text-3xl">
-              Mes applications
-            </h2>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold sm:text-3xl">
+                  Mes applications
+                </h2>
 
-            <p className="mt-2 text-sm text-gray-500">
-              Créez, ouvrez et gérez vos
-              applications avec SimiRork.
-            </p>
+                <p className="mt-2 text-sm text-gray-500">
+                  Créez, ouvrez et gérez vos
+                  applications avec SimiRork.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-gray-800 bg-gray-900 px-4 py-3">
+                <p className="text-xs text-gray-500">
+                  Solde de crédits
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-blue-400">
+                  {creditState.balance}
+                </p>
+
+                <p className="text-xs text-gray-600">
+                  {creditState.consumed} consommés
+                </p>
+              </div>
+            </div>
           </div>
 
           {projects.length === 0 ? (
@@ -961,6 +1281,180 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {showHistory && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-gray-800 p-5">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Historique des consommations
+                  </h2>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    {creditState.consumed} crédits consommés au total
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowHistory(false)
+                  }
+                  className="text-xl text-gray-500 hover:text-white"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="overflow-y-auto p-4">
+                {usageHistory.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
+                    Aucune génération enregistrée.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {usageHistory.map(
+                      (usage) => (
+                        <div
+                          key={usage.id}
+                          className="rounded-xl border border-gray-800 bg-gray-950 p-4"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-white">
+                                {usage.projectName}
+                              </p>
+
+                              <p className="mt-1 text-xs text-gray-500">
+                                {formatModel(
+                                  usage.model
+                                )}
+                              </p>
+                            </div>
+
+                            <span className="shrink-0 rounded-full border border-blue-900 bg-blue-950/50 px-2.5 py-1 text-xs font-bold text-blue-400">
+                              -{usage.creditsUsed} crédits
+                            </span>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Prompt
+                              </p>
+                              <p className="mt-1 text-gray-300">
+                                {usage.promptWords} mots
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Caractères
+                              </p>
+                              <p className="mt-1 text-gray-300">
+                                {usage.promptChars}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Tokens
+                              </p>
+                              <p className="mt-1 text-gray-300">
+                                {usage.totalTokens.toLocaleString()}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Coût OpenRouter
+                              </p>
+                              <p className="mt-1 text-gray-300">
+                                {formatCost(
+                                  usage.cost
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Valeur du crédit
+                              </p>
+
+                              <p className="mt-1 text-gray-300">
+                                {formatCreditValue(
+                                  usage.creditValueUsd
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Crédit exact
+                              </p>
+
+                              <p className="mt-1 text-gray-300">
+                                {formatCreditsExact(
+                                  usage.creditsExact
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Solde après
+                              </p>
+
+                              <p className="mt-1 font-semibold text-blue-400">
+                                {usage.balanceAfter !==
+                                undefined
+                                  ? usage.balanceAfter
+                                  : '—'}
+                              </p>
+                            </div>
+
+                            <div className="rounded-lg bg-gray-900 p-2">
+                              <p className="text-gray-600">
+                                Facturation
+                              </p>
+
+                              <p className="mt-1 text-gray-300">
+                                {usage.billingMethod ===
+                                'openrouter_cost'
+                                  ? 'Coût réel'
+                                  : usage.billingMethod ||
+                                    'Ancienne règle'}
+                              </p>
+                            </div>
+                          </div>
+
+                          {usage.billingVersion && (
+                            <p className="mt-2 text-[11px] text-gray-600">
+                              Règle :
+                              {' '}
+                              {usage.billingVersion}
+                            </p>
+                          )}
+
+                          <p className="mt-3 text-[11px] text-gray-600">
+                            {new Date(
+                              usage.createdAt
+                            ).toLocaleString(
+                              'fr-FR'
+                            )}
+                          </p>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     );
   }
@@ -1000,37 +1494,51 @@ export default function Home() {
             </div>
           </div>
 
-          <select
-            value={modelVersion}
-            onChange={(event) =>
-              setModelVersion(
-                event.target.value
-              )
-            }
-            className="hidden rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-200 outline-none focus:border-blue-500 sm:block"
-          >
-            <option value="google/gemini-3.6-flash">
-              Gemini 3.6 Flash
-            </option>
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg border border-blue-900 bg-blue-950/50 px-2.5 py-2 text-xs font-bold text-blue-400 sm:px-3">
+              {creditState.balance} crédits
+            </div>
 
-            <option value="google/gemini-3.5-flash-lite">
-              Gemini 3.5 Flash Lite
-            </option>
+            <button
+              type="button"
+              onClick={() =>
+                setShowHistory(true)
+              }
+              className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-gray-300 hover:bg-gray-800"
+            >
+              Historique
+            </button>
 
-            <option value="google/gemini-2.5-flash-lite">
-              Gemini 2.5 Flash Lite
-            </option>
+            <select
+              value={modelVersion}
+              onChange={(event) =>
+                setModelVersion(
+                  event.target.value
+                )
+              }
+              className="hidden rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-200 outline-none focus:border-blue-500 sm:block"
+            >
+              <option value="google/gemini-3.6-flash">
+                Gemini 3.6 Flash
+              </option>
 
-            <option value="openai/gpt-4o-mini">
-              GPT-4o Mini
-            </option>
-          </select>
+              <option value="google/gemini-3.5-flash-lite">
+                Gemini 3.5 Flash Lite
+              </option>
+
+              <option value="google/gemini-2.5-flash-lite">
+                Gemini 2.5 Flash Lite
+              </option>
+
+              <option value="openai/gpt-4o-mini">
+                GPT-4o Mini
+              </option>
+            </select>
+          </div>
         </div>
       </header>
 
-      {/* ========================================================
-          BARRE APK
-         ======================================================== */}
+      {/* BARRE APK */}
 
       <div className="border-b border-purple-900/60 bg-purple-950/40">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-3 py-3 sm:px-5 md:flex-row md:items-center md:justify-between lg:px-6">
@@ -1042,11 +1550,9 @@ export default function Home() {
             <p className="mt-1 text-xs text-purple-300/70">
               {currentApkStatus ===
               'ready'
-                ? `Votre APK ${
-                    createSafeFileBaseName(
-                      currentProject.name
-                    )
-                  }.apk est prêt à être téléchargé.`
+                ? `Votre APK ${createSafeFileBaseName(
+                    currentProject.name
+                  )}.apk est prêt à être téléchargé.`
                 : currentApkStatus ===
                     'building'
                   ? "La construction de l'APK est en cours..."
@@ -1128,9 +1634,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ========================================================
-          APK PRÊT
-         ======================================================== */}
+      {/* APK PRÊT */}
 
       {currentApkStatus ===
         'ready' &&
@@ -1166,9 +1670,7 @@ export default function Home() {
           </div>
         )}
 
-      {/* ========================================================
-          ERREUR APK
-         ======================================================== */}
+      {/* ERREUR APK */}
 
       {currentApkStatus ===
         'error' &&
@@ -1187,9 +1689,7 @@ export default function Home() {
           </div>
         )}
 
-      {/* ========================================================
-          ONGLETS MOBILE
-         ======================================================== */}
+      {/* ONGLETS MOBILE */}
 
       <div className="border-b border-gray-800 bg-gray-950 md:hidden">
         <div className="grid grid-cols-2">
@@ -1223,14 +1723,10 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ========================================================
-          CONTENU
-         ======================================================== */}
+      {/* CONTENU */}
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-5 md:min-h-[calc(100vh-64px)] md:flex-row md:gap-5 md:p-6">
-        {/* ======================================================
-            PANNEAU PROMPT
-           ====================================================== */}
+        {/* PROMPT */}
 
         <section
           className={`w-full flex-col rounded-2xl border border-gray-800 bg-gray-900 p-3 shadow-xl sm:p-5 md:w-[38%] ${
@@ -1240,14 +1736,28 @@ export default function Home() {
           }`}
         >
           <div className="mb-4 shrink-0">
-            <h2 className="text-base font-semibold sm:text-lg">
-              Modifier votre application
-            </h2>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold sm:text-lg">
+                  Modifier votre application
+                </h2>
 
-            <p className="mt-1 text-xs leading-5 text-gray-500 sm:text-sm">
-              Décrivez ce que vous voulez créer
-              ou modifier.
-            </p>
+                <p className="mt-1 text-xs leading-5 text-gray-500 sm:text-sm">
+                  Décrivez ce que vous voulez créer
+                  ou modifier.
+                </p>
+              </div>
+
+              <div className="shrink-0 rounded-xl border border-blue-900 bg-blue-950/40 px-3 py-2 text-right">
+                <p className="text-[10px] text-gray-500">
+                  Solde
+                </p>
+
+                <p className="text-sm font-bold text-blue-400">
+                  {creditState.balance}
+                </p>
+              </div>
+            </div>
           </div>
 
           <textarea
@@ -1259,7 +1769,7 @@ export default function Home() {
             placeholder="Exemple : Crée une application de gestion de dépenses avec ajout de dépenses, catégories, total mensuel, historique et solde disponible."
           />
 
-          <div className="mt-2 text-xs">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             {hasPrompt ? (
               <span className="text-green-400">
                 Prompt prêt
@@ -1269,14 +1779,96 @@ export default function Home() {
                 Saisissez votre demande
               </span>
             )}
+
+            <span className="text-gray-500">
+              {promptWords} mots • {promptChars} caractères
+            </span>
           </div>
+
+          {lastUsage &&
+            lastUsage.projectId ===
+              currentProject.id && (
+              <div className="mt-3 rounded-xl border border-gray-800 bg-gray-950 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-gray-400">
+                    Dernière génération
+                  </span>
+
+                  <span className="text-xs font-bold text-blue-400">
+                    -{lastUsage.creditsUsed} crédits
+                  </span>
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-3">
+                  <span className="text-gray-600">
+                    Tokens :{' '}
+                    <b className="text-gray-400">
+                      {lastUsage.totalTokens.toLocaleString()}
+                    </b>
+                  </span>
+
+                  <span className="text-gray-600">
+                    Coût :{' '}
+                    <b className="text-gray-400">
+                      {formatCost(
+                        lastUsage.cost
+                      )}
+                    </b>
+                  </span>
+
+                  <span className="text-gray-600">
+                    Tarif :{' '}
+                    <b className="text-gray-400">
+                      {formatCreditValue(
+                        lastUsage.creditValueUsd
+                      )}
+                    </b>
+                  </span>
+
+                  <span className="text-gray-600">
+                    Crédit exact :{' '}
+                    <b className="text-gray-400">
+                      {formatCreditsExact(
+                        lastUsage.creditsExact
+                      )}
+                    </b>
+                  </span>
+
+                  <span className="text-gray-600">
+                    Solde :{' '}
+                    <b className="text-blue-400">
+                      {lastUsage.balanceAfter !==
+                      undefined
+                        ? lastUsage.balanceAfter
+                        : creditState.balance}
+                    </b>
+                  </span>
+
+                  <span className="text-gray-600">
+                    Méthode :{' '}
+                    <b className="text-gray-400">
+                      {lastUsage.billingMethod ===
+                      'openrouter_cost'
+                        ? 'Coût réel'
+                        : 'Ancienne règle'}
+                    </b>
+                  </span>
+                </div>
+              </div>
+            )}
 
           <button
             type="button"
             onClick={handleGenerate}
-            disabled={!hasPrompt || loading}
+            disabled={
+              !hasPrompt ||
+              loading ||
+              creditState.balance <= 0
+            }
             className={`mt-3 min-h-12 w-full shrink-0 rounded-xl px-4 text-sm font-semibold text-white transition sm:min-h-14 sm:text-base ${
-              hasPrompt && !loading
+              hasPrompt &&
+              !loading &&
+              creditState.balance > 0
                 ? 'bg-blue-600 hover:bg-blue-500 active:scale-[0.98]'
                 : 'cursor-not-allowed bg-gray-700 opacity-50'
             }`}
@@ -1286,15 +1878,25 @@ export default function Home() {
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 Génération en cours...
               </span>
+            ) : creditState.balance <= 0 ? (
+              'Crédits épuisés'
             ) : (
               'Générer / Modifier'
             )}
           </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setShowHistory(true)
+            }
+            className="mt-2 w-full rounded-xl border border-gray-800 bg-gray-950 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-gray-800 hover:text-white"
+          >
+            Voir l’historique de consommation
+          </button>
         </section>
 
-        {/* ======================================================
-            APERÇU
-           ====================================================== */}
+        {/* APERÇU */}
 
         <section
           className={`w-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-800 bg-white shadow-xl ${
@@ -1345,6 +1947,190 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      {/* HISTORIQUE */}
+
+      {showHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-800 p-5">
+              <div>
+                <h2 className="text-lg font-semibold">
+                  Historique des consommations
+                </h2>
+
+                <p className="mt-1 text-xs text-gray-500">
+                  Solde :{' '}
+                  <span className="text-blue-400">
+                    {creditState.balance}
+                  </span>
+                  {' • '}
+                  Consommés :{' '}
+                  <span className="text-gray-300">
+                    {creditState.consumed}
+                  </span>
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowHistory(false)
+                }
+                className="text-xl text-gray-500 hover:text-white"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4">
+              {usageHistory.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
+                  Aucune génération enregistrée.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {usageHistory.map(
+                    (usage) => (
+                      <div
+                        key={usage.id}
+                        className="rounded-xl border border-gray-800 bg-gray-950 p-4"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-white">
+                              {usage.projectName}
+                            </p>
+
+                            <p className="mt-1 text-xs text-gray-500">
+                              {formatModel(
+                                usage.model
+                              )}
+                            </p>
+                          </div>
+
+                          <span className="shrink-0 rounded-full border border-blue-900 bg-blue-950/50 px-2.5 py-1 text-xs font-bold text-blue-400">
+                            -{usage.creditsUsed} crédits
+                          </span>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Prompt
+                            </p>
+                            <p className="mt-1 text-gray-300">
+                              {usage.promptWords} mots
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Caractères
+                            </p>
+                            <p className="mt-1 text-gray-300">
+                              {usage.promptChars}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Tokens
+                            </p>
+                            <p className="mt-1 text-gray-300">
+                              {usage.totalTokens.toLocaleString()}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Coût OpenRouter
+                            </p>
+                            <p className="mt-1 text-gray-300">
+                              {formatCost(
+                                usage.cost
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Valeur crédit
+                            </p>
+
+                            <p className="mt-1 text-gray-300">
+                              {formatCreditValue(
+                                usage.creditValueUsd
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Crédit exact
+                            </p>
+
+                            <p className="mt-1 text-gray-300">
+                              {formatCreditsExact(
+                                usage.creditsExact
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Solde après
+                            </p>
+
+                            <p className="mt-1 font-semibold text-blue-400">
+                              {usage.balanceAfter !==
+                              undefined
+                                ? usage.balanceAfter
+                                : '—'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-lg bg-gray-900 p-2">
+                            <p className="text-gray-600">
+                              Facturation
+                            </p>
+
+                            <p className="mt-1 text-gray-300">
+                              {usage.billingMethod ===
+                              'openrouter_cost'
+                                ? 'Coût réel'
+                                : usage.billingMethod ||
+                                  'Ancienne règle'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {usage.billingVersion && (
+                          <p className="mt-2 text-[11px] text-gray-600">
+                            Version de facturation :
+                            {' '}
+                            {usage.billingVersion}
+                          </p>
+                        )}
+
+                        <p className="mt-3 text-[11px] text-gray-600">
+                          {new Date(
+                            usage.createdAt
+                          ).toLocaleString(
+                            'fr-FR'
+                          )}
+                        </p>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
