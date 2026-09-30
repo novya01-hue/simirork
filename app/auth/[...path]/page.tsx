@@ -1,26 +1,14 @@
-import {
-  AuthView,
-  authViewPaths,
-} from '@neondatabase/auth-ui';
-
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return Object.values(authViewPaths).map(
-    (path) => ({
-      path,
-    })
-  );
-}
+﻿import { AuthView } from '@neondatabase/auth-ui';
 
 export default async function AuthPage({
   params,
 }: {
   params: Promise<{
-    path: string;
+    path: string[];
   }>;
 }) {
   const { path } = await params;
+  const authPath = path[path.length - 1];
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gray-950 p-4 text-white">
@@ -39,7 +27,7 @@ export default async function AuthPage({
           </p>
         </div>
 
-        <AuthView path={path} />
+        <AuthView path={authPath} />
       </div>
     </main>
   );
