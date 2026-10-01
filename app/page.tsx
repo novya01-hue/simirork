@@ -1883,7 +1883,14 @@ export default function Home() {
                   (project) => (
                     <article
                       key={project.id}
-                      className="flex min-h-[250px] flex-col rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-xl shadow-black/10"
+                      onClick={(event) => {
+                        if ((event.target as HTMLElement).closest("button")) {
+                          return;
+                        }
+
+                        void handleOpenProject(project);
+                      }}
+                      className="flex min-h-[250px] cursor-pointer flex-col rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-xl shadow-black/10"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -2685,3 +2692,4 @@ export default function Home() {
     </main>
   );
 }
+
