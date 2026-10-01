@@ -13,12 +13,23 @@ export async function POST(request: Request) {
 
     const code = body?.code;
     const appName = body?.appName || 'SimiRork App';
+    const projectId = body?.projectId;
 
     if (!code || typeof code !== 'string') {
       return NextResponse.json(
         {
           success: false,
           error: 'Aucun code d’application à compiler.',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!projectId || typeof projectId !== 'string') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Identifiant du projet manquant.',
         },
         { status: 400 }
       );
@@ -54,6 +65,7 @@ export async function POST(request: Request) {
           client_payload: {
             html_base64: htmlBase64,
             app_name: appName,
+            project_id: projectId,
           },
         }),
       }
@@ -121,6 +133,7 @@ export async function POST(request: Request) {
       message: 'Construction APK lancée.',
       runId,
       appName,
+      projectId,
     });
   } catch (error) {
     console.error('Erreur lancement APK:', error);

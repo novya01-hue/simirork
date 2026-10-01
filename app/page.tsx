@@ -49,62 +49,39 @@ type GenerationUsage = {
 
 const STORAGE_KEY = 'simirork_projects';
 
-function normalizeProject(
-  project: Project
-): Project {
+function normalizeProject(project: Project): Project {
   return {
     ...project,
     apkStatus:
       project.apkStatus ||
-      (project.apkRunId
-        ? 'ready'
-        : 'none'),
-    apkRunId:
-      project.apkRunId || null,
-    apkError:
-      project.apkError || '',
+      (project.apkRunId ? 'ready' : 'none'),
+    apkRunId: project.apkRunId || null,
+    apkError: project.apkError || '',
   };
 }
 
-function createSafeFileBaseName(
-  name: string
-): string {
+function createSafeFileBaseName(name: string): string {
   const normalized = name
     .normalize('NFKD')
-    .replace(
-      /[\u0300-\u036f]/g,
-      ''
-    );
+    .replace(/[\u0300-\u036f]/g, '');
 
   const words =
-    normalized.match(
-      /[a-zA-Z0-9]+/g
-    ) || [];
+    normalized.match(/[a-zA-Z0-9]+/g) || [];
 
-  return (
-    words.join('-') ||
-    'simirork-app'
-  );
+  return words.join('-') || 'simirork-app';
 }
 
-function countWords(
-  text: string
-): number {
-  const trimmed =
-    text.trim();
+function countWords(text: string): number {
+  const trimmed = text.trim();
 
   if (!trimmed) {
     return 0;
   }
 
-  return trimmed.split(
-    /\s+/
-  ).length;
+  return trimmed.split(/\s+/).length;
 }
 
-function formatCost(
-  cost: number
-): string {
+function formatCost(cost: number): string {
   if (
     !Number.isFinite(cost) ||
     cost <= 0
@@ -115,9 +92,7 @@ function formatCost(
   return `$${cost.toFixed(6)}`;
 }
 
-function formatCreditValue(
-  value?: number
-): string {
+function formatCreditValue(value?: number): string {
   if (
     value === undefined ||
     !Number.isFinite(value) ||
@@ -129,9 +104,7 @@ function formatCreditValue(
   return `$${value.toFixed(6)}`;
 }
 
-function formatCreditsExact(
-  value?: number
-): string {
+function formatCreditsExact(value?: number): string {
   if (
     value === undefined ||
     !Number.isFinite(value) ||
@@ -143,13 +116,8 @@ function formatCreditsExact(
   return value.toFixed(4);
 }
 
-function formatModel(
-  model: string
-): string {
-  const names: Record<
-    string,
-    string
-  > = {
+function formatModel(model: string): string {
+  const names: Record<string, string> = {
     'google/gemini-3.6-flash':
       'Gemini 3.6 Flash',
     'google/gemini-3.5-flash-lite':
@@ -195,17 +163,13 @@ export default function Home() {
     });
 
   const [usageHistory, setUsageHistory] =
-    useState<GenerationUsage[]>(
-      []
-    );
+    useState<GenerationUsage[]>([]);
 
   const [showHistory, setShowHistory] =
     useState(false);
 
   const [lastUsage, setLastUsage] =
-    useState<GenerationUsage | null>(
-      null
-    );
+    useState<GenerationUsage | null>(null);
 
   const [showNewProject, setShowNewProject] =
     useState(false);
@@ -231,36 +195,24 @@ export default function Home() {
     );
 
   const [activeTab, setActiveTab] =
-    useState<
-      'prompt' | 'preview'
-    >('prompt');
-
-  const activeApkPolls =
-    useRef<Set<string>>(
-      new Set()
+    useState<'prompt' | 'preview'>(
+      'prompt'
     );
 
-  // ============================================================
-  // CRÉDITS SERVEUR
-  // ============================================================
+  const activeApkPolls =
+    useRef<Set<string>>(new Set());
 
   const refreshCredits =
-    async (): Promise<
-      CreditState | null
-    > => {
+    async (): Promise<CreditState | null> => {
       try {
         setCreditError('');
 
         const response =
-          await fetch(
-            '/api/credits',
-            {
-              method: 'GET',
-              credentials:
-                'same-origin',
-              cache: 'no-store',
-            }
-          );
+          await fetch('/api/credits', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
 
         const data =
           await response.json();
@@ -277,23 +229,15 @@ export default function Home() {
         }
 
         const balance =
-          Number(
-            data.account.balance
-          );
+          Number(data.account.balance);
 
         const consumed =
-          Number(
-            data.account.consumed
-          );
+          Number(data.account.consumed);
 
         if (
-          !Number.isFinite(
-            balance
-          ) ||
+          !Number.isFinite(balance) ||
           balance < 0 ||
-          !Number.isFinite(
-            consumed
-          ) ||
+          !Number.isFinite(consumed) ||
           consumed < 0
         ) {
           throw new Error(
@@ -301,19 +245,13 @@ export default function Home() {
           );
         }
 
-        const nextCreditState =
-          {
-            balance,
-            consumed,
-          };
+        const nextCreditState = {
+          balance,
+          consumed,
+        };
 
-        setCreditState(
-          nextCreditState
-        );
-
-        setCreditsLoaded(
-          true
-        );
+        setCreditState(nextCreditState);
+        setCreditsLoaded(true);
 
         return nextCreditState;
       } catch (error) {
@@ -322,9 +260,7 @@ export default function Home() {
           error
         );
 
-        setCreditsLoaded(
-          false
-        );
+        setCreditsLoaded(false);
 
         setCreditError(
           error instanceof Error
@@ -336,10 +272,6 @@ export default function Home() {
       }
     };
 
-  // ============================================================
-  // HISTORIQUE SERVEUR
-  // ============================================================
-
   const refreshUsageHistory =
     async (): Promise<
       GenerationUsage[] | null
@@ -348,15 +280,11 @@ export default function Home() {
         setUsageError('');
 
         const response =
-          await fetch(
-            '/api/usage',
-            {
-              method: 'GET',
-              credentials:
-                'same-origin',
-              cache: 'no-store',
-            }
-          );
+          await fetch('/api/usage', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
 
         const data =
           await response.json();
@@ -364,9 +292,7 @@ export default function Home() {
         if (
           !response.ok ||
           !data.success ||
-          !Array.isArray(
-            data.history
-          )
+          !Array.isArray(data.history)
         ) {
           throw new Error(
             data?.error ||
@@ -386,8 +312,7 @@ export default function Home() {
                 usage.createdAt,
               projectId:
                 String(
-                  usage.projectId ||
-                    ''
+                  usage.projectId || ''
                 ),
               projectName:
                 String(
@@ -396,8 +321,7 @@ export default function Home() {
                 ),
               model:
                 String(
-                  usage.model ||
-                    ''
+                  usage.model || ''
                 ),
               promptWords:
                 Number(
@@ -429,7 +353,7 @@ export default function Home() {
                 ) || 0,
               creditValueUsd:
                 usage.creditValueUsd !==
-                undefined &&
+                  undefined &&
                 usage.creditValueUsd !==
                   null
                   ? Number(
@@ -438,7 +362,7 @@ export default function Home() {
                   : undefined,
               creditsExact:
                 usage.creditsExact !==
-                undefined &&
+                  undefined &&
                 usage.creditsExact !==
                   null
                   ? Number(
@@ -478,13 +402,8 @@ export default function Home() {
             })
           );
 
-        setUsageHistory(
-          history
-        );
-
-        setUsageLoaded(
-          true
-        );
+        setUsageHistory(history);
+        setUsageLoaded(true);
 
         return history;
       } catch (error) {
@@ -493,9 +412,7 @@ export default function Home() {
           error
         );
 
-        setUsageLoaded(
-          false
-        );
+        setUsageLoaded(false);
 
         setUsageError(
           error instanceof Error
@@ -507,27 +424,17 @@ export default function Home() {
       }
     };
 
-  // ============================================================
-  // API PROJETS
-  // ============================================================
-
   const fetchProjects =
-    async (): Promise<
-      Project[] | null
-    > => {
+    async (): Promise<Project[] | null> => {
       try {
         setProjectError('');
 
         const response =
-          await fetch(
-            '/api/projects',
-            {
-              method: 'GET',
-              credentials:
-                'same-origin',
-              cache: 'no-store',
-            }
-          );
+          await fetch('/api/projects', {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+          });
 
         const data =
           await response.json();
@@ -547,24 +454,12 @@ export default function Home() {
 
         const serverProjects =
           data.projects.map(
-            (
-              project: Project
-            ) =>
-              normalizeProject(
-                project
-              )
+            (project: Project) =>
+              normalizeProject(project)
           );
 
-        setProjects(
-          serverProjects
-        );
+        setProjects(serverProjects);
 
-        /*
-         * Le serveur devient la source officielle.
-         *
-         * localStorage reste volontairement
-         * comme copie de secours pendant la migration.
-         */
         try {
           localStorage.setItem(
             STORAGE_KEY,
@@ -602,21 +497,15 @@ export default function Home() {
     ): Promise<Project | null> => {
       try {
         const response =
-          await fetch(
-            '/api/projects',
-            {
-              method: 'POST',
-              credentials:
-                'same-origin',
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
-              body: JSON.stringify(
-                project
-              ),
-            }
-          );
+          await fetch('/api/projects', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify(project),
+          });
 
         const data =
           await response.json();
@@ -663,34 +552,28 @@ export default function Home() {
             )}`,
             {
               method: 'PATCH',
-              credentials:
-                'same-origin',
+              credentials: 'same-origin',
               headers: {
                 'Content-Type':
                   'application/json',
               },
               cache: 'no-store',
-              body: JSON.stringify(
-                {
-                  name:
-                    project.name,
-                  description:
-                    project.description,
-                  prompt:
-                    project.prompt,
-                  code:
-                    project.code,
-                  apkStatus:
-                    project.apkStatus ||
-                    'none',
-                  apkRunId:
-                    project.apkRunId ||
-                    null,
-                  apkError:
-                    project.apkError ||
-                    '',
-                }
-              ),
+              body: JSON.stringify({
+                name: project.name,
+                description:
+                  project.description,
+                prompt: project.prompt,
+                code: project.code,
+                apkStatus:
+                  project.apkStatus ||
+                  'none',
+                apkRunId:
+                  project.apkRunId ||
+                  null,
+                apkError:
+                  project.apkError ||
+                  '',
+              }),
             }
           );
 
@@ -739,8 +622,7 @@ export default function Home() {
             )}`,
             {
               method: 'DELETE',
-              credentials:
-                'same-origin',
+              credentials: 'same-origin',
               cache: 'no-store',
             }
           );
@@ -775,56 +657,33 @@ export default function Home() {
       }
     };
 
-  // ============================================================
-  // CHARGEMENT
-  // ============================================================
-
   useEffect(() => {
     let cancelled = false;
 
     const loadData =
       async () => {
-        /*
-         * 1. Le serveur est prioritaire.
-         */
         const serverProjects =
           await fetchProjects();
 
-        if (
-          cancelled
-        ) {
+        if (cancelled) {
           return;
         }
 
-        /*
-         * 2. Si le serveur est momentanément
-         * indisponible, on utilise l'ancien
-         * localStorage comme secours.
-         *
-         * IMPORTANT :
-         * nous ne supprimons pas cette sauvegarde.
-         */
-        if (
-          !serverProjects
-        ) {
+        if (!serverProjects) {
           try {
             const savedProjects =
               localStorage.getItem(
                 STORAGE_KEY
               );
 
-            if (
-              savedProjects
-            ) {
+            if (savedProjects) {
               const parsed =
                 JSON.parse(
                   savedProjects
                 );
 
               if (
-                Array.isArray(
-                  parsed
-                )
+                Array.isArray(parsed)
               ) {
                 setProjects(
                   parsed.map(
@@ -846,16 +705,11 @@ export default function Home() {
           }
         }
 
-        if (
-          !cancelled
-        ) {
-          setStorageLoaded(
-            true
-          );
+        if (!cancelled) {
+          setStorageLoaded(true);
         }
 
         void refreshCredits();
-
         void refreshUsageHistory();
       };
 
@@ -866,10 +720,6 @@ export default function Home() {
     };
   }, []);
 
-  // ============================================================
-  // SAUVEGARDE LOCALE DE SECOURS
-  // ============================================================
-
   useEffect(() => {
     if (!storageLoaded) {
       return;
@@ -878,9 +728,7 @@ export default function Home() {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(
-          projects
-        )
+        JSON.stringify(projects)
       );
     } catch (error) {
       console.error(
@@ -893,10 +741,6 @@ export default function Home() {
     storageLoaded,
   ]);
 
-  // ============================================================
-  // PROJET
-  // ============================================================
-
   const updateProject =
     async (
       projectId: string,
@@ -905,13 +749,10 @@ export default function Home() {
       const existingProject =
         projects.find(
           (project) =>
-            project.id ===
-            projectId
+            project.id === projectId
         );
 
-      if (
-        !existingProject
-      ) {
+      if (!existingProject) {
         return false;
       }
 
@@ -921,15 +762,11 @@ export default function Home() {
           ...patch,
         });
 
-      /*
-       * Mise à jour immédiate de l'interface.
-       */
       setProjects(
         (previous) =>
           previous.map(
             (project) =>
-              project.id ===
-              projectId
+              project.id === projectId
                 ? nextProject
                 : project
           )
@@ -938,24 +775,17 @@ export default function Home() {
       setCurrentProject(
         (previous) =>
           previous &&
-          previous.id ===
-            projectId
+          previous.id === projectId
             ? nextProject
             : previous
       );
 
-      /*
-       * Puis persistance officielle
-       * dans PostgreSQL.
-       */
       const savedProject =
         await updateProjectOnServer(
           nextProject
         );
 
-      if (
-        !savedProject
-      ) {
+      if (!savedProject) {
         return false;
       }
 
@@ -963,8 +793,7 @@ export default function Home() {
         (previous) =>
           previous.map(
             (project) =>
-              project.id ===
-              projectId
+              project.id === projectId
                 ? savedProject
                 : project
           )
@@ -973,18 +802,13 @@ export default function Home() {
       setCurrentProject(
         (previous) =>
           previous &&
-          previous.id ===
-            projectId
+          previous.id === projectId
             ? savedProject
             : previous
       );
 
       return true;
     };
-
-  // ============================================================
-  // APK
-  // ============================================================
 
   const startApkPolling =
     async (
@@ -1025,8 +849,7 @@ export default function Home() {
               {
                 credentials:
                   'same-origin',
-                cache:
-                  'no-store',
+                cache: 'no-store',
               }
             );
 
@@ -1132,10 +955,6 @@ export default function Home() {
     storageLoaded,
   ]);
 
-  // ============================================================
-  // CRÉER
-  // ============================================================
-
   const handleCreateProject =
     async () => {
       const name =
@@ -1143,7 +962,7 @@ export default function Home() {
 
       if (!name) {
         alert(
-          "Veuillez donner un nom à votre application."
+          'Veuillez donner un nom à votre application.'
         );
         return;
       }
@@ -1161,29 +980,19 @@ export default function Home() {
             newDescription.trim(),
           prompt: '',
           code: '',
-          createdAt:
-            now,
-          updatedAt:
-            now,
-          apkStatus:
-            'none',
-          apkRunId:
-            null,
-          apkError:
-            '',
+          createdAt: now,
+          updatedAt: now,
+          apkStatus: 'none',
+          apkRunId: null,
+          apkError: '',
         };
 
-      /*
-       * Création officielle dans PostgreSQL.
-       */
       const serverProject =
         await createProjectOnServer(
           localProject
         );
 
-      if (
-        !serverProject
-      ) {
+      if (!serverProject) {
         alert(
           projectError ||
             "Impossible d'enregistrer la nouvelle application."
@@ -1207,45 +1016,18 @@ export default function Home() {
       );
 
       setPrompt('');
-
-      setGeneratedCode(
-        ''
-      );
-
+      setGeneratedCode('');
       setNewName('');
-
-      setNewDescription(
-        ''
-      );
-
-      setShowNewProject(
-        false
-      );
-
-      setActiveTab(
-        'prompt'
-      );
-
-      setLastUsage(
-        null
-      );
+      setNewDescription('');
+      setShowNewProject(false);
+      setActiveTab('prompt');
+      setLastUsage(null);
     };
-
-  // ============================================================
-  // OUVRIR
-  // ============================================================
 
   const handleOpenProject =
     async (
       project: Project
     ) => {
-      /*
-       * Le projet vient normalement déjà
-       * de GET /api/projects.
-       *
-       * On récupère néanmoins la version
-       * serveur la plus récente avant ouverture.
-       */
       try {
         const response =
           await fetch(
@@ -1254,8 +1036,7 @@ export default function Home() {
             )}`,
             {
               method: 'GET',
-              credentials:
-                'same-origin',
+              credentials: 'same-origin',
               cache: 'no-store',
             }
           );
@@ -1277,8 +1058,7 @@ export default function Home() {
             (previous) =>
               previous.map(
                 (item) =>
-                  item.id ===
-                  project.id
+                  item.id === project.id
                     ? project
                     : item
               )
@@ -1328,40 +1108,15 @@ export default function Home() {
       );
     };
 
-  // ============================================================
-  // RETOUR
-  // ============================================================
-
   const handleBackToProjects =
     () => {
-      setCurrentProject(
-        null
-      );
-
+      setCurrentProject(null);
       setPrompt('');
-
-      setGeneratedCode(
-        ''
-      );
-
-      setActiveTab(
-        'prompt'
-      );
-
-      setLastUsage(
-        null
-      );
-
-      /*
-       * On recharge la liste depuis
-       * le serveur au retour.
-       */
+      setGeneratedCode('');
+      setActiveTab('prompt');
+      setLastUsage(null);
       void fetchProjects();
     };
-
-  // ============================================================
-  // SUPPRIMER
-  // ============================================================
 
   const handleDeleteProject =
     async (
@@ -1400,63 +1155,37 @@ export default function Home() {
       );
 
       if (
-        currentProject?.id ===
-        id
+        currentProject?.id === id
       ) {
-        setCurrentProject(
-          null
-        );
-
+        setCurrentProject(null);
         setPrompt('');
-
-        setGeneratedCode(
-          ''
-        );
-
-        setActiveTab(
-          'prompt'
-        );
-
-        setLastUsage(
-          null
-        );
+        setGeneratedCode('');
+        setActiveTab('prompt');
+        setLastUsage(null);
       }
     };
-
-  // ============================================================
-  // SAUVEGARDER
-  // ============================================================
 
   const saveCurrentProject =
     async (
       code: string,
       projectPrompt: string
     ) => {
-      if (
-        !currentProject
-      ) {
+      if (!currentProject) {
         return false;
       }
 
       const updatedProject: Project =
         normalizeProject({
           ...currentProject,
-          prompt:
-            projectPrompt,
+          prompt: projectPrompt,
           code,
           updatedAt:
             new Date().toISOString(),
-          apkStatus:
-            'none',
-          apkRunId:
-            null,
-          apkError:
-            '',
+          apkStatus: 'none',
+          apkRunId: null,
+          apkError: '',
         });
 
-      /*
-       * Interface locale immédiate.
-       */
       setProjects(
         (previous) =>
           previous.map(
@@ -1472,17 +1201,12 @@ export default function Home() {
         updatedProject
       );
 
-      /*
-       * Persistance officielle.
-       */
       const savedProject =
         await updateProjectOnServer(
           updatedProject
         );
 
-      if (
-        !savedProject
-      ) {
+      if (!savedProject) {
         return false;
       }
 
@@ -1503,10 +1227,6 @@ export default function Home() {
 
       return true;
     };
-
-  // ============================================================
-  // EXPORT HTML
-  // ============================================================
 
   const handleExportHTML =
     (
@@ -1532,7 +1252,8 @@ export default function Home() {
         new Blob(
           [code],
           {
-            type: 'text/html;charset=utf-8',
+            type:
+              'text/html;charset=utf-8',
           }
         );
 
@@ -1563,14 +1284,8 @@ export default function Home() {
         link
       );
 
-      URL.revokeObjectURL(
-        url
-      );
+      URL.revokeObjectURL(url);
     };
-
-  // ============================================================
-  // APK
-  // ============================================================
 
   const handleBuildAPK =
     async (
@@ -1600,26 +1315,18 @@ export default function Home() {
         return;
       }
 
-      /*
-       * État BUILDING immédiatement enregistré
-       * dans PostgreSQL.
-       */
       const markedBuilding =
         await updateProject(
           project.id,
           {
             apkStatus:
               'building',
-            apkRunId:
-              null,
-            apkError:
-              '',
+            apkRunId: null,
+            apkError: '',
           }
         );
 
-      if (
-        !markedBuilding
-      ) {
+      if (!markedBuilding) {
         alert(
           "Impossible d'enregistrer l'état de construction de l'APK."
         );
@@ -1631,21 +1338,20 @@ export default function Home() {
           await fetch(
             '/api/build-apk',
             {
-              method:
-                'POST',
+              method: 'POST',
               credentials:
                 'same-origin',
               headers: {
                 'Content-Type':
                   'application/json',
               },
-              body: JSON.stringify(
-                {
-                  code,
-                  appName:
-                    project.name,
-                }
-              ),
+              body: JSON.stringify({
+                code,
+                appName:
+                  project.name,
+                projectId:
+                  project.id,
+              }),
             }
           );
 
@@ -1664,9 +1370,7 @@ export default function Home() {
         }
 
         const runId =
-          String(
-            data.runId
-          );
+          String(data.runId);
 
         await updateProject(
           project.id,
@@ -1675,8 +1379,7 @@ export default function Home() {
               'building',
             apkRunId:
               runId,
-            apkError:
-              '',
+            apkError: '',
           }
         );
 
@@ -1695,8 +1398,7 @@ export default function Home() {
           {
             apkStatus:
               'error',
-            apkRunId:
-              null,
+            apkRunId: null,
             apkError:
               error instanceof
               Error
@@ -1706,10 +1408,6 @@ export default function Home() {
         );
       }
     };
-
-  // ============================================================
-  // TÉLÉCHARGER APK
-  // ============================================================
 
   const handleDownloadAPK =
     (
@@ -1737,10 +1435,6 @@ export default function Home() {
         downloadUrl;
     };
 
-  // ============================================================
-  // GÉNÉRATION IA + CRÉDITS
-  // ============================================================
-
   const handleGenerate =
     async () => {
       const currentPrompt =
@@ -1760,10 +1454,6 @@ export default function Home() {
         return;
       }
 
-      /*
-       * Vérification du solde directement
-       * depuis PostgreSQL avant chaque génération.
-       */
       const freshCredits =
         await refreshCredits();
 
@@ -1784,43 +1474,36 @@ export default function Home() {
         return;
       }
 
-      setLoading(
-        true
-      );
+      setLoading(true);
 
       try {
         const response =
           await fetch(
             '/api/generate',
             {
-              method:
-                'POST',
+              method: 'POST',
               credentials:
                 'same-origin',
               headers: {
                 'Content-Type':
                   'application/json',
               },
-              body: JSON.stringify(
-                {
-                  prompt:
-                    currentPrompt,
-                  modelVersion,
-                  projectId:
-                    currentProject.id,
-                  projectName:
-                    currentProject.name,
-                }
-              ),
+              body: JSON.stringify({
+                prompt:
+                  currentPrompt,
+                modelVersion,
+                projectId:
+                  currentProject.id,
+                projectName:
+                  currentProject.name,
+              }),
             }
           );
 
         const data =
           await response.json();
 
-        if (
-          !response.ok
-        ) {
+        if (!response.ok) {
           void refreshCredits();
           void refreshUsageHistory();
 
@@ -1841,8 +1524,7 @@ export default function Home() {
         }
 
         const usage =
-          data.usage ||
-          {};
+          data.usage || {};
 
         const promptWords =
           Number(
@@ -1928,8 +1610,7 @@ export default function Home() {
           !Number.isFinite(
             balanceAfter
           ) ||
-          balanceAfter <
-            0
+          balanceAfter < 0
         ) {
           throw new Error(
             'Le nouveau solde retourné par le serveur est invalide.'
@@ -1940,16 +1621,15 @@ export default function Home() {
           !Number.isFinite(
             consumedAfter
           ) ||
-          consumedAfter <
-            0
+          consumedAfter < 0
         ) {
           throw new Error(
             'Le cumul de crédits retourné par le serveur est invalide.'
           );
         }
 
-        const generationUsage: GenerationUsage =
-          {
+        const generationUsage:
+          GenerationUsage = {
             id: crypto.randomUUID(),
             createdAt:
               new Date().toISOString(),
@@ -1982,16 +1662,14 @@ export default function Home() {
               Number.isFinite(
                 creditValueUsd
               ) &&
-              creditValueUsd >
-                0
+              creditValueUsd > 0
                 ? creditValueUsd
                 : undefined,
             creditsExact:
               Number.isFinite(
                 creditsExact
               ) &&
-              creditsExact >=
-                0
+              creditsExact >= 0
                 ? creditsExact
                 : undefined,
             billingMethod,
@@ -2010,9 +1688,7 @@ export default function Home() {
             currentPrompt
           );
 
-        if (
-          !saved
-        ) {
+        if (!saved) {
           throw new Error(
             "L'application a été générée, mais son enregistrement serveur a échoué."
           );
@@ -2022,9 +1698,6 @@ export default function Home() {
           generationUsage
         );
 
-        /*
-         * Solde officiel fourni par PostgreSQL.
-         */
         setCreditState({
           balance:
             balanceAfter,
@@ -2036,16 +1709,7 @@ export default function Home() {
           'preview'
         );
 
-        /*
-         * L'historique officiel est relu
-         * depuis PostgreSQL.
-         */
         void refreshUsageHistory();
-
-        /*
-         * Vérification complémentaire
-         * du compte serveur.
-         */
         void refreshCredits();
       } catch (error) {
         console.error(
@@ -2060,31 +1724,18 @@ export default function Home() {
             : 'Une erreur est survenue pendant la génération.'
         );
       } finally {
-        setLoading(
-          false
-        );
+        setLoading(false);
       }
     };
 
-  // ============================================================
-  // INFORMATIONS PROMPT
-  // ============================================================
-
   const promptWords =
-    countWords(
-      prompt
-    );
+    countWords(prompt);
 
   const promptChars =
     prompt.length;
 
   const hasPrompt =
-    prompt.trim()
-      .length > 0;
-
-  // ============================================================
-  // APK LABEL
-  // ============================================================
+    prompt.trim().length > 0;
 
   const getApkLabel =
     (
@@ -2109,404 +1760,332 @@ export default function Home() {
       }
     };
 
-  // ============================================================
-  // AFFICHAGE CRÉDITS
-  // ============================================================
-
   const creditsLabel =
     !creditsLoaded
       ? '...'
       : `${creditState.balance} crédits`;
 
-  // ============================================================
-  // RAFRAÎCHIR L'HISTORIQUE À L'OUVERTURE
-  // ============================================================
-
   const handleOpenHistory =
     () => {
-      setShowHistory(
-        true
-      );
-
+      setShowHistory(true);
       void refreshUsageHistory();
       void refreshCredits();
     };
 
-  // ============================================================
-  // PAGE MES APPLICATIONS
-  // ============================================================
+  /*
+   * ============================================================
+   * ÉCRAN 1 : MES APPLICATIONS
+   *
+   * IMPORTANT :
+   * SimiRork démarre toujours ici.
+   * On n'ouvre jamais directement le prompt.
+   * ============================================================
+   */
 
   if (!currentProject) {
     return (
-      <main className="min-h-screen bg-gray-950 text-white">
-        <header className="border-b border-gray-800 bg-gray-950">
-          <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold">
-                S
-              </div>
+      <main className="min-h-screen bg-[#030712] text-white">
+        <div className="mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
 
-              <div>
-                <h1 className="text-lg font-bold sm:text-xl">
-                  SimiRork
-                </h1>
+          <header className="mb-8 flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                SimiRork
+              </h1>
 
-                <p className="hidden text-xs text-gray-500 sm:block">
-                  AI App Generator
-                </p>
-              </div>
+              <p className="mt-1 text-sm text-white/50">
+                Studio IA de création d'applications
+              </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm">
+                <span className="text-white/50">
+                  Crédits :
+                </span>{' '}
+                <span className="font-semibold">
+                  {creditsLabel}
+                </span>
+              </div>
+
               <button
                 type="button"
-                onClick={
-                  handleOpenHistory
-                }
-                className="rounded-xl border border-gray-800 bg-gray-900 px-3 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-gray-800 sm:px-4 sm:text-sm"
+                onClick={handleOpenHistory}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium transition hover:bg-white/10"
               >
                 Historique
               </button>
+            </div>
+          </header>
 
-              <div className="hidden rounded-xl border border-blue-900 bg-blue-950/50 px-3 py-2 text-xs font-semibold text-blue-300 sm:block">
-                {creditsLabel}
+          {projectError && (
+            <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {projectError}
+            </div>
+          )}
+
+          {creditError && (
+            <div className="mb-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+              {creditError}
+            </div>
+          )}
+
+          <section>
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Mes applications
+                </h2>
+
+                <p className="mt-1 text-sm text-white/45">
+                  Retrouvez vos applications créées avec SimiRork.
+                </p>
               </div>
 
               <button
                 type="button"
                 onClick={() =>
-                  setShowNewProject(
-                    true
-                  )
+                  setShowNewProject(true)
                 }
-                className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500"
+                className="w-full rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-white/90 sm:w-auto"
               >
                 + Nouvelle application
               </button>
             </div>
-          </div>
-        </header>
 
-        {projectError && (
-          <div className="border-b border-amber-900 bg-amber-950/40 px-4 py-2 text-center text-xs text-amber-300">
-            {projectError}
-          </div>
-        )}
+            {projects.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-6 py-16 text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-2xl">
+                  ✦
+                </div>
 
-        {creditError && (
-          <div className="border-b border-red-900 bg-red-950/50 px-4 py-2 text-center text-xs text-red-300">
-            {creditError}
-          </div>
-        )}
+                <h3 className="text-lg font-semibold">
+                  Aucune application
+                </h3>
 
-        {usageError && (
-          <div className="border-b border-amber-900 bg-amber-950/40 px-4 py-2 text-center text-xs text-amber-300">
-            {usageError}
-          </div>
-        )}
-
-        <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
-          <div className="mb-8">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h2 className="text-2xl font-bold sm:text-3xl">
-                  Mes applications
-                </h2>
-
-                <p className="mt-2 text-sm text-gray-500">
-                  Créez, ouvrez et gérez vos
-                  applications avec SimiRork.
+                <p className="mx-auto mt-2 max-w-md text-sm text-white/45">
+                  Commencez par créer votre première application avec SimiRork.
                 </p>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowNewProject(true)
+                  }
+                  className="mt-6 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black"
+                >
+                  + Créer ma première application
+                </button>
               </div>
-
-              <div className="rounded-2xl border border-gray-800 bg-gray-900 px-4 py-3">
-                <p className="text-xs text-gray-500">
-                  Solde de crédits
-                </p>
-
-                <p className="mt-1 text-xl font-bold text-blue-400">
-                  {!creditsLoaded
-                    ? '...'
-                    : creditState.balance}
-                </p>
-
-                <p className="text-xs text-gray-600">
-                  {!creditsLoaded
-                    ? 'Chargement...'
-                    : `${creditState.consumed} consommés`}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {projects.length ===
-          0 ? (
-            <div className="flex min-h-[400px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-800 bg-gray-900 px-6 text-center">
-              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gray-800 text-2xl">
-                +
-              </div>
-
-              <h3 className="text-lg font-semibold text-gray-300">
-                Aucune application
-              </h3>
-
-              <p className="mt-2 max-w-md text-sm text-gray-500">
-                Créez votre première application
-                pour commencer à utiliser SimiRork.
-              </p>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowNewProject(
-                    true
-                  )
-                }
-                className="mt-5 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold transition hover:bg-blue-500"
-              >
-                Créer ma première application
-              </button>
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {projects.map(
-                (
-                  project
-                ) => {
-                  const apkProject =
-                    normalizeProject(
-                      project
-                    );
-
-                  return (
-                    <div
-                      key={
-                        project.id
-                      }
-                      className="rounded-2xl border border-gray-800 bg-gray-900 p-5 shadow-xl"
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {projects.map(
+                  (project) => (
+                    <article
+                      key={project.id}
+                      className="flex min-h-[250px] flex-col rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-xl shadow-black/10"
                     >
-                      <div className="mb-4 flex items-start justify-between gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600/10 text-xl">
-                          📱
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-lg font-semibold">
+                            {project.name}
+                          </h3>
+
+                          <p className="mt-1 line-clamp-2 text-sm text-white/45">
+                            {project.description ||
+                              'Application créée avec SimiRork'}
+                          </p>
                         </div>
 
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10">
+                          📱
+                        </div>
+                      </div>
+
+                      <div className="mt-5 space-y-2 text-xs text-white/40">
+                        <div>
+                          Créée le{' '}
+                          {new Date(
+                            project.createdAt
+                          ).toLocaleDateString(
+                            'fr-FR'
+                          )}
+                        </div>
+
+                        {project.code && (
+                          <div className="text-emerald-400">
+                            ✓ Application générée
+                          </div>
+                        )}
+
+                        {project.apkStatus ===
+                          'building' && (
+                          <div className="text-yellow-400">
+                            ⏳ APK en construction
+                          </div>
+                        )}
+
+                        {project.apkStatus ===
+                          'ready' && (
+                          <div className="text-emerald-400">
+                            ✓ APK disponible
+                          </div>
+                        )}
+
+                        {project.apkStatus ===
+                          'error' && (
+                          <div className="text-red-400">
+                            ⚠ Erreur APK
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-auto flex flex-col gap-2 pt-5">
                         <button
                           type="button"
                           onClick={() =>
-                            void handleDeleteProject(
-                              project.id
-                            )
-                          }
-                          className="text-xs text-gray-600 transition hover:text-red-400"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-
-                      <h3 className="truncate text-lg font-semibold">
-                        {
-                          project.name
-                        }
-                      </h3>
-
-                      <p className="mt-2 min-h-[40px] text-sm text-gray-500">
-                        {project.description ||
-                          'Aucune description'}
-                      </p>
-
-                      <div className="mt-3">
-                        {project.code ? (
-                          <span className="inline-flex rounded-full border border-green-900 bg-green-950/50 px-2.5 py-1 text-xs font-medium text-green-400">
-                            Application générée
-                          </span>
-                        ) : (
-                          <span className="inline-flex rounded-full border border-gray-800 bg-gray-950 px-2.5 py-1 text-xs font-medium text-gray-600">
-                            Projet non généré
-                          </span>
-                        )}
-                      </div>
-
-                      {apkProject.apkStatus ===
-                        'building' && (
-                        <p className="mt-3 text-xs text-purple-400">
-                          ⏳ Construction de l'APK
-                          en cours...
-                        </p>
-                      )}
-
-                      {apkProject.apkStatus ===
-                        'ready' &&
-                        apkProject.apkRunId && (
-                          <p className="mt-3 text-xs text-green-400">
-                            ✅ APK prêt :
-                            {' '}
-                            {createSafeFileBaseName(
-                              project.name
-                            )}
-                            .apk
-                          </p>
-                        )}
-
-                      {apkProject.apkStatus ===
-                        'error' &&
-                        apkProject.apkError && (
-                          <p className="mt-3 max-h-16 overflow-auto text-xs text-red-400">
-                            ❌{' '}
-                            {
-                              apkProject.apkError
-                            }
-                          </p>
-                        )}
-
-                      <div className="mt-5 grid gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void handleOpenProject(
+                            handleOpenProject(
                               project
                             )
                           }
-                          className="w-full rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold transition hover:bg-gray-700"
+                          className="w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-black transition hover:bg-white/90"
                         >
                           Ouvrir
                         </button>
 
                         {project.code && (
-                          <>
-                            {apkProject.apkStatus ===
-                            'ready' ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleDownloadAPK(
-                                    apkProject
-                                  )
-                                }
-                                className="w-full rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white shadow-lg transition hover:bg-green-500 active:scale-[0.98]"
-                              >
-                                ⬇ Télécharger{' '}
-                                {createSafeFileBaseName(
-                                  project.name
-                                )}
-                                .apk
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleBuildAPK(
-                                    apkProject
-                                  )
-                                }
-                                disabled={
-                                  apkProject.apkStatus ===
-                                  'building'
-                                }
-                                className={`w-full rounded-xl px-4 py-3 text-sm font-bold transition ${
-                                  apkProject.apkStatus ===
-                                  'building'
-                                    ? 'cursor-not-allowed bg-gray-800 text-gray-600'
-                                    : 'bg-purple-600 text-white shadow-lg hover:bg-purple-500 active:scale-[0.98]'
-                                }`}
-                              >
-                                {getApkLabel(
-                                  apkProject
-                                )}
-                              </button>
-                            )}
-                          </>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleExportHTML(
+                                project
+                              )
+                            }
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm transition hover:bg-white/10"
+                          >
+                            Exporter HTML
+                          </button>
                         )}
+
+                        {project.apkStatus ===
+                        'ready' ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleDownloadAPK(
+                                project
+                              )
+                            }
+                            className="w-full rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+                          >
+                            {getApkLabel(
+                              project
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={
+                              !project.code ||
+                              project.apkStatus ===
+                                'building'
+                            }
+                            onClick={() =>
+                              handleBuildAPK(
+                                project
+                              )
+                            }
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {getApkLabel(
+                              project
+                            )}
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDeleteProject(
+                              project.id
+                            )
+                          }
+                          className="w-full rounded-xl px-4 py-2 text-xs text-red-400/70 transition hover:bg-red-500/10 hover:text-red-300"
+                        >
+                          Supprimer
+                        </button>
                       </div>
-                    </div>
-                  );
-                }
-              )}
-            </div>
-          )}
+                    </article>
+                  )
+                )}
+              </div>
+            )}
+          </section>
         </div>
 
         {showNewProject && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-            <div className="w-full max-w-lg rounded-2xl border border-gray-800 bg-gray-900 p-5 shadow-2xl sm:p-6">
-              <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0b1120] p-6 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold">
                   Nouvelle application
                 </h2>
 
                 <button
                   type="button"
                   onClick={() =>
-                    setShowNewProject(
-                      false
-                    )
+                    setShowNewProject(false)
                   }
-                  className="text-xl text-gray-500 transition hover:text-white"
+                  className="rounded-lg px-3 py-2 text-white/50 hover:bg-white/10 hover:text-white"
                 >
-                  ×
+                  ✕
                 </button>
               </div>
 
-              <label className="text-sm text-gray-400">
-                Nom de l'application
-              </label>
+              <div className="mt-6 space-y-4">
+                <div>
+                  <label className="mb-2 block text-sm text-white/60">
+                    Nom de l'application
+                  </label>
 
-              <input
-                value={
-                  newName
-                }
-                onChange={(
-                  event
-                ) =>
-                  setNewName(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder="Exemple : MonBudget"
-                className="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950 px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
-              />
+                  <input
+                    value={newName}
+                    onChange={(event) =>
+                      setNewName(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Ex. MonBudget"
+                    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none transition focus:border-white/30"
+                  />
+                </div>
 
-              <label className="mt-5 block text-sm text-gray-400">
-                Description
-              </label>
+                <div>
+                  <label className="mb-2 block text-sm text-white/60">
+                    Description
+                  </label>
 
-              <textarea
-                value={
-                  newDescription
-                }
-                onChange={(
-                  event
-                ) =>
-                  setNewDescription(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder="Décrivez brièvement votre application..."
-                className="mt-2 min-h-[120px] w-full resize-none rounded-xl border border-gray-700 bg-gray-950 p-4 text-sm text-white outline-none focus:border-blue-500"
-              />
-
-              <div className="mt-5 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowNewProject(
-                      false
-                    )
-                  }
-                  className="flex-1 rounded-xl bg-gray-800 px-4 py-3 text-sm font-semibold transition hover:bg-gray-700"
-                >
-                  Annuler
-                </button>
+                  <textarea
+                    value={newDescription}
+                    onChange={(event) =>
+                      setNewDescription(
+                        event.target.value
+                      )
+                    }
+                    rows={4}
+                    placeholder="Décrivez brièvement votre application..."
+                    className="w-full resize-none rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none transition focus:border-white/30"
+                  />
+                </div>
 
                 <button
                   type="button"
-                  onClick={() =>
-                    void handleCreateProject()
+                  onClick={
+                    handleCreateProject
                   }
-                  className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold transition hover:bg-blue-500"
+                  className="w-full rounded-xl bg-white px-4 py-3 font-semibold text-black transition hover:bg-white/90"
                 >
-                  Créer
+                  Créer l'application
                 </button>
               </div>
             </div>
@@ -2514,205 +2093,138 @@ export default function Home() {
         )}
 
         {showHistory && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-            <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-gray-800 p-5">
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 px-4 py-8 backdrop-blur-sm">
+            <div className="mx-auto w-full max-w-4xl rounded-2xl border border-white/10 bg-[#0b1120] p-6 shadow-2xl">
+              <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold">
-                    Historique des consommations
+                  <h2 className="text-xl font-semibold">
+                    Historique des générations
                   </h2>
 
-                  <p className="mt-1 text-xs text-gray-500">
-                    {usageLoaded
-                      ? `${creditState.consumed} crédits consommés au total`
-                      : "Chargement de l'historique..."}
+                  <p className="mt-1 text-sm text-white/45">
+                    Consommation des crédits et tokens.
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() =>
-                    setShowHistory(
-                      false
-                    )
+                    setShowHistory(false)
                   }
-                  className="text-xl text-gray-500 hover:text-white"
+                  className="rounded-lg px-3 py-2 text-white/50 hover:bg-white/10 hover:text-white"
                 >
-                  ×
+                  ✕
                 </button>
               </div>
 
-              <div className="overflow-y-auto p-4">
-                {usageError && (
-                  <div className="mb-3 rounded-xl border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">
-                    {usageError}
-                  </div>
-                )}
-
+              <div className="mt-6">
                 {!usageLoaded ? (
-                  <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
-                    Chargement de l'historique...
+                  <div className="rounded-xl bg-white/5 p-6 text-center text-sm text-white/50">
+                    Chargement...
                   </div>
                 ) : usageHistory.length ===
                   0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
-                    Aucune génération enregistrée sur le compte serveur.
+                  <div className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-white/40">
+                    Aucun historique de génération.
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {usageHistory.map(
-                      (
-                        usage
-                      ) => (
+                      (usage) => (
                         <div
-                          key={
-                            usage.id
-                          }
-                          className="rounded-xl border border-gray-800 bg-gray-950 p-4"
+                          key={usage.id}
+                          className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
                         >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-white">
-                                {
-                                  usage.projectName
-                                }
-                              </p>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="font-medium">
+                                {usage.projectName}
+                              </div>
 
-                              <p className="mt-1 text-xs text-gray-500">
+                              <div className="mt-1 text-xs text-white/40">
+                                {new Date(
+                                  usage.createdAt
+                                ).toLocaleString(
+                                  'fr-FR'
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-sm">
+                              <span className="text-white/50">
+                                Coût :
+                              </span>{' '}
+                              {formatCost(
+                                usage.cost
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+                            <div className="rounded-lg bg-black/20 p-3">
+                              <div className="text-white/40">
+                                Modèle
+                              </div>
+                              <div className="mt-1">
                                 {formatModel(
                                   usage.model
                                 )}
-                              </p>
+                              </div>
                             </div>
 
-                            <span className="shrink-0 rounded-full border border-blue-900 bg-blue-950/50 px-2.5 py-1 text-xs font-bold text-blue-400">
-                              -{usage.creditsUsed}{' '}
-                              crédits
-                            </span>
-                          </div>
-
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
+                            <div className="rounded-lg bg-black/20 p-3">
+                              <div className="text-white/40">
                                 Prompt
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {
-                                  usage.promptWords
-                                }{' '}
+                              </div>
+                              <div className="mt-1">
+                                {usage.promptWords}{' '}
                                 mots
-                              </p>
+                              </div>
                             </div>
 
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Caractères
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {
-                                  usage.promptChars
-                                }
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
+                            <div className="rounded-lg bg-black/20 p-3">
+                              <div className="text-white/40">
                                 Tokens
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {usage.totalTokens.toLocaleString()}
-                              </p>
+                              </div>
+                              <div className="mt-1">
+                                {usage.totalTokens}
+                              </div>
                             </div>
 
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Coût OpenRouter
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {formatCost(
-                                  usage.cost
-                                )}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Valeur crédit
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {formatCreditValue(
-                                  usage.creditValueUsd
-                                )}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Crédit exact
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {formatCreditsExact(
-                                  usage.creditsExact
-                                )}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Solde après
-                              </p>
-
-                              <p className="mt-1 font-semibold text-blue-400">
-                                {usage.balanceAfter !==
+                            <div className="rounded-lg bg-black/20 p-3">
+                              <div className="text-white/40">
+                                Crédits
+                              </div>
+                              <div className="mt-1">
+                                {usage.creditsExact !==
                                 undefined
-                                  ? usage.balanceAfter
-                                  : '—'}
-                              </p>
-                            </div>
-
-                            <div className="rounded-lg bg-gray-900 p-2">
-                              <p className="text-gray-600">
-                                Facturation
-                              </p>
-
-                              <p className="mt-1 text-gray-300">
-                                {usage.billingMethod ===
-                                'openrouter_cost'
-                                  ? 'Coût réel'
-                                  : usage.billingMethod ||
-                                    'Ancienne règle'}
-                              </p>
+                                  ? formatCreditsExact(
+                                      usage.creditsExact
+                                    )
+                                  : usage.creditsUsed}
+                              </div>
                             </div>
                           </div>
 
-                          {usage.billingVersion && (
-                            <p className="mt-2 text-[11px] text-gray-600">
-                              Version de facturation :
-                              {' '}
-                              {
-                                usage.billingVersion
-                              }
-                            </p>
-                          )}
-
-                          <p className="mt-3 text-[11px] text-gray-600">
-                            {new Date(
-                              usage.createdAt
-                            ).toLocaleString(
-                              'fr-FR'
+                          <div className="mt-3 text-xs text-white/40">
+                            Valeur d'un crédit :{' '}
+                            {formatCreditValue(
+                              usage.creditValueUsd
                             )}
-                          </p>
+                            {' · '}
+                            Solde après :{' '}
+                            {usage.balanceAfter ??
+                              '—'}
+                          </div>
                         </div>
                       )
                     )}
+                  </div>
+                )}
+
+                {usageError && (
+                  <div className="mt-4 rounded-xl bg-red-500/10 p-4 text-sm text-red-300">
+                    {usageError}
                   </div>
                 )}
               </div>
@@ -2723,49 +2235,52 @@ export default function Home() {
     );
   }
 
-  // ============================================================
-  // ÉDITEUR
-  // ============================================================
-
-  const currentApkStatus =
-    currentProject.apkStatus ||
-    'none';
+  /*
+   * ============================================================
+   * ÉCRAN 2 : APPLICATION OUVERTE
+   *
+   * Cet écran n'est accessible qu'après avoir choisi une
+   * application existante ou après avoir cliqué sur
+   * "+ Nouvelle application".
+   * ============================================================
+   */
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-gray-950 text-white">
-      <header className="border-b border-gray-800 bg-gray-950">
-        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-3 px-3 sm:px-5 lg:px-6">
+    <main className="min-h-screen bg-[#030712] text-white">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
+
+        <header className="flex flex-col gap-4 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               onClick={
                 handleBackToProjects
               }
-              className="rounded-lg px-2 py-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm transition hover:bg-white/10"
             >
               ←
             </button>
 
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-sm font-bold">
-              S
-            </div>
-
             <div className="min-w-0">
-              <h1 className="truncate text-base font-bold sm:text-xl">
-                {
-                  currentProject.name
-                }
+              <h1 className="truncate text-lg font-semibold sm:text-xl">
+                {currentProject.name}
               </h1>
 
-              <p className="hidden text-xs text-gray-500 sm:block">
-                Projet SimiRork
+              <p className="truncate text-xs text-white/40">
+                {currentProject.description ||
+                  'Application SimiRork'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="rounded-lg border border-blue-900 bg-blue-950/50 px-2.5 py-2 text-xs font-bold text-blue-400 sm:px-3">
-              {creditsLabel}
+          <div className="flex flex-wrap gap-2">
+            <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm">
+              <span className="text-white/50">
+                Crédits :
+              </span>{' '}
+              <span className="font-semibold">
+                {creditsLabel}
+              </span>
             </div>
 
             <button
@@ -2773,728 +2288,400 @@ export default function Home() {
               onClick={
                 handleOpenHistory
               }
-              className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-gray-300 hover:bg-gray-800"
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm transition hover:bg-white/10"
             >
               Historique
             </button>
-
-            <select
-              value={
-                modelVersion
-              }
-              onChange={(
-                event
-              ) =>
-                setModelVersion(
-                  event.target
-                    .value
-                )
-              }
-              className="hidden rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs text-gray-200 outline-none focus:border-blue-500 sm:block"
-            >
-              <option value="google/gemini-3.6-flash">
-                Gemini 3.6 Flash
-              </option>
-
-              <option value="google/gemini-3.5-flash-lite">
-                Gemini 3.5 Flash Lite
-              </option>
-
-              <option value="google/gemini-2.5-flash-lite">
-                Gemini 2.5 Flash Lite
-              </option>
-
-              <option value="openai/gpt-4o-mini">
-                GPT-4o Mini
-              </option>
-            </select>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {projectError && (
-        <div className="border-b border-amber-900 bg-amber-950/40 px-4 py-2 text-center text-xs text-amber-300">
-          {projectError}
-        </div>
-      )}
-
-      {creditError && (
-        <div className="border-b border-red-900 bg-red-950/50 px-4 py-2 text-center text-xs text-red-300">
-          {creditError}
-        </div>
-      )}
-
-      {/* BARRE APK */}
-
-      <div className="border-b border-purple-900/60 bg-purple-950/40">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-3 py-3 sm:px-5 md:flex-row md:items-center md:justify-between lg:px-6">
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-purple-200 sm:text-base">
-              📱 Application Android
-            </p>
-
-            <p className="mt-1 text-xs text-purple-300/70">
-              {currentApkStatus ===
-              'ready'
-                ? `Votre APK ${createSafeFileBaseName(
-                    currentProject.name
-                  )}.apk est prêt à être téléchargé.`
-                : currentApkStatus ===
-                    'building'
-                  ? "La construction de l'APK est en cours..."
-                  : generatedCode
-                    ? "Transformez cette application en APK utilisable en dehors de SimiRork."
-                    : "Générez d'abord votre application pour activer la création de l'APK."}
-            </p>
-          </div>
-
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-            {currentApkStatus ===
-              'ready' &&
-            currentProject.apkRunId ? (
-              <button
-                type="button"
-                onClick={() =>
-                  handleDownloadAPK(
-                    currentProject
-                  )
-                }
-                className="w-full rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:bg-green-500 active:scale-[0.98] sm:w-auto"
-              >
-                ⬇ Télécharger{' '}
-                {
-                  createSafeFileBaseName(
-                    currentProject.name
-                  )
-                }
-                .apk
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() =>
-                  void handleBuildAPK(
-                    currentProject
-                  )
-                }
-                disabled={
-                  !generatedCode ||
-                  currentApkStatus ===
-                    'building'
-                }
-                className={`w-full rounded-xl px-5 py-3 text-sm font-bold transition sm:w-auto ${
-                  generatedCode &&
-                  currentApkStatus !==
-                    'building'
-                    ? 'bg-purple-600 text-white shadow-lg hover:bg-purple-500 active:scale-[0.98]'
-                    : 'cursor-not-allowed bg-gray-800 text-gray-600'
-                }`}
-              >
-                {currentApkStatus ===
-                'building'
-                  ? "⏳ Création de l'APK..."
-                  : currentApkStatus ===
-                      'error'
-                    ? "↻ Réessayer l'APK"
-                    : '📱 Créer mon APK'}
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() =>
-                handleExportHTML(
-                  currentProject
-                )
-              }
-              disabled={
-                !generatedCode
-              }
-              className={`w-full rounded-xl px-5 py-3 text-sm font-semibold transition sm:w-auto ${
-                generatedCode
-                  ? 'bg-gray-800 text-gray-200 hover:bg-gray-700'
-                  : 'cursor-not-allowed bg-gray-900 text-gray-700'
-              }`}
-            >
-              📦 Exporter HTML
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* APK PRÊT */}
-
-      {currentApkStatus ===
-        'ready' &&
-        currentProject.apkRunId && (
-          <div className="border-b border-green-800 bg-green-950/70 px-4 py-3">
-            <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-green-300">
-                  ✅ APK généré avec succès
-                </p>
-
-                <p className="mt-1 text-xs text-green-400/80">
-                  {
-                    createSafeFileBaseName(
-                      currentProject.name
-                    )
-                  }
-                  .apk est maintenant disponible comme
-                  application Android indépendante.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  handleDownloadAPK(
-                    currentProject
-                  )
-                }
-                className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-green-500"
-              >
-                ⬇ Télécharger l'APK
-              </button>
-            </div>
-          </div>
-        )}
-
-      {/* ERREUR APK */}
-
-      {currentApkStatus ===
-        'error' &&
-        currentProject.apkError && (
-          <div className="border-b border-red-800 bg-red-950/70 px-4 py-3">
-            <div className="mx-auto max-w-7xl">
-              <p className="text-sm font-semibold text-red-300">
-                ❌ Erreur pendant la création de
-                l'APK
-              </p>
-
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs text-red-400">
-                {
-                  currentProject.apkError
-                }
-              </pre>
-            </div>
-          </div>
-        )}
-
-      {/* ONGLETS MOBILE */}
-
-      <div className="border-b border-gray-800 bg-gray-950 md:hidden">
-        <div className="grid grid-cols-2">
+        <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() =>
-              setActiveTab(
-                'prompt'
-              )
+              setActiveTab('prompt')
             }
-            className={`min-h-12 border-b-2 text-sm font-medium ${
-              activeTab ===
-              'prompt'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-500'
+            className={`rounded-xl px-4 py-2 text-sm ${
+              activeTab === 'prompt'
+                ? 'bg-white text-black'
+                : 'bg-white/5 text-white/60'
             }`}
           >
-            Modifier
+            Prompt
           </button>
 
           <button
             type="button"
+            disabled={!generatedCode}
             onClick={() =>
-              setActiveTab(
-                'preview'
-              )
+              setActiveTab('preview')
             }
-            className={`min-h-12 border-b-2 text-sm font-medium ${
-              activeTab ===
-              'preview'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-500'
+            className={`rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-30 ${
+              activeTab === 'preview'
+                ? 'bg-white text-black'
+                : 'bg-white/5 text-white/60'
             }`}
           >
             Aperçu
           </button>
-        </div>
-      </div>
 
-      {/* CONTENU */}
-
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-5 md:min-h-[calc(100vh-64px)] md:flex-row md:gap-5 md:p-6">
-        {/* PROMPT */}
-
-        <section
-          className={`w-full flex-col rounded-2xl border border-gray-800 bg-gray-900 p-3 shadow-xl sm:p-5 md:w-[38%] ${
-            activeTab ===
-            'prompt'
-              ? 'flex'
-              : 'hidden md:flex'
-          }`}
-        >
-          <div className="mb-4 shrink-0">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold sm:text-lg">
-                  Modifier votre application
-                </h2>
-
-                <p className="mt-1 text-xs leading-5 text-gray-500 sm:text-sm">
-                  Décrivez ce que vous voulez créer
-                  ou modifier.
-                </p>
-              </div>
-
-              <div className="shrink-0 rounded-xl border border-blue-900 bg-blue-950/40 px-3 py-2 text-right">
-                <p className="text-[10px] text-gray-500">
-                  Solde
-                </p>
-
-                <p className="text-sm font-bold text-blue-400">
-                  {!creditsLoaded
-                    ? '...'
-                    : creditState.balance}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <textarea
-            value={
-              prompt
-            }
-            onChange={(
-              event
-            ) =>
-              setPrompt(
-                event.target
-                  .value
-              )
-            }
-            className="min-h-[240px] w-full resize-none rounded-xl border border-gray-700 bg-gray-950 p-4 text-sm leading-6 text-white outline-none placeholder:text-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:min-h-[320px] sm:text-base"
-            placeholder="Exemple : Crée une application de gestion de dépenses avec ajout de dépenses, catégories, total mensuel, historique et solde disponible."
-          />
-
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-            {hasPrompt ? (
-              <span className="text-green-400">
-                Prompt prêt
-              </span>
-            ) : (
-              <span className="text-gray-600">
-                Saisissez votre demande
-              </span>
-            )}
-
-            <span className="text-gray-500">
-              {promptWords}{' '}
-              mots •{' '}
-              {promptChars}{' '}
-              caractères
-            </span>
-          </div>
-
-          {lastUsage &&
-            lastUsage.projectId ===
-              currentProject.id && (
-              <div className="mt-3 rounded-xl border border-gray-800 bg-gray-950 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold text-gray-400">
-                    Dernière génération
-                  </span>
-
-                  <span className="text-xs font-bold text-blue-400">
-                    -{lastUsage.creditsUsed}{' '}
-                    crédits
-                  </span>
-                </div>
-
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-3">
-                  <span className="text-gray-600">
-                    Tokens :{' '}
-                    <b className="text-gray-400">
-                      {lastUsage.totalTokens.toLocaleString()}
-                    </b>
-                  </span>
-
-                  <span className="text-gray-600">
-                    Coût :{' '}
-                    <b className="text-gray-400">
-                      {formatCost(
-                        lastUsage.cost
-                      )}
-                    </b>
-                  </span>
-
-                  <span className="text-gray-600">
-                    Tarif :{' '}
-                    <b className="text-gray-400">
-                      {formatCreditValue(
-                        lastUsage.creditValueUsd
-                      )}
-                    </b>
-                  </span>
-
-                  <span className="text-gray-600">
-                    Crédit exact :{' '}
-                    <b className="text-gray-400">
-                      {formatCreditsExact(
-                        lastUsage.creditsExact
-                      )}
-                    </b>
-                  </span>
-
-                  <span className="text-gray-600">
-                    Solde :{' '}
-                    <b className="text-blue-400">
-                      {lastUsage.balanceAfter !==
-                      undefined
-                        ? lastUsage.balanceAfter
-                        : creditState.balance}
-                    </b>
-                  </span>
-
-                  <span className="text-gray-600">
-                    Méthode :{' '}
-                    <b className="text-gray-400">
-                      {lastUsage.billingMethod ===
-                      'openrouter_cost'
-                        ? 'Coût réel'
-                        : 'Ancienne règle'}
-                    </b>
-                  </span>
-                </div>
-              </div>
-            )}
-
-          <button
-            type="button"
-            onClick={
-              handleGenerate
-            }
-            disabled={
-              !hasPrompt ||
-              loading ||
-              !creditsLoaded ||
-              creditState.balance <=
-                0
-            }
-            className={`mt-3 min-h-12 w-full shrink-0 rounded-xl px-4 text-sm font-semibold text-white transition sm:min-h-14 sm:text-base ${
-              hasPrompt &&
-              !loading &&
-              creditsLoaded &&
-              creditState.balance >
-                0
-                ? 'bg-blue-600 hover:bg-blue-500 active:scale-[0.98]'
-                : 'cursor-not-allowed bg-gray-700 opacity-50'
-            }`}
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Génération en cours...
-              </span>
-            ) : !creditsLoaded ? (
-              'Vérification du solde...'
-            ) : creditState.balance <=
-              0 ? (
-              'Crédits épuisés'
-            ) : (
-              'Générer / Modifier'
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={
-              handleOpenHistory
-            }
-            className="mt-2 w-full rounded-xl border border-gray-800 bg-gray-950 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-gray-800 hover:text-white"
-          >
-            Voir l'historique de consommation
-          </button>
-        </section>
-
-        {/* APERÇU */}
-
-        <section
-          className={`w-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-gray-800 bg-white shadow-xl ${
-            activeTab ===
-            'preview'
-              ? 'flex'
-              : 'hidden md:flex'
-          }`}
-        >
-          <div className="flex h-12 shrink-0 items-center justify-between border-b border-gray-200 bg-gray-50 px-3 sm:px-4">
-            <div className="flex items-center gap-2">
-              <div className="h-2.5 w-2.5 rounded-full bg-red-400" />
-              <div className="h-2.5 w-2.5 rounded-full bg-yellow-400" />
-              <div className="h-2.5 w-2.5 rounded-full bg-green-400" />
-            </div>
-
-            <span className="text-xs font-medium text-gray-500">
-              Aperçu —{' '}
-              {
-                currentProject.name
-              }
-            </span>
-
-            <div className="w-12" />
-          </div>
-
-          <div className="min-h-0 flex-1">
-            {generatedCode ? (
-              <iframe
-                key={
-                  generatedCode
-                }
-                srcDoc={
-                  generatedCode
-                }
-                title="Aperçu de l'application"
-                className="block h-full min-h-[500px] w-full border-0 bg-white"
-                sandbox="allow-scripts allow-forms allow-modals allow-popups"
-              />
-            ) : (
-              <div className="flex min-h-[500px] flex-col items-center justify-center bg-gray-950 px-6 text-center">
-                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-gray-800 bg-gray-900 text-2xl">
-                  ✨
-                </div>
-
-                <h3 className="text-base font-semibold text-gray-300 sm:text-lg">
-                  Votre application apparaîtra ici
-                </h3>
-
-                <p className="mt-2 max-w-sm text-xs leading-5 text-gray-600 sm:text-sm">
-                  Décrivez votre application
-                  puis appuyez sur Générer.
-                </p>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* HISTORIQUE */}
-
-      {showHistory && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 p-5">
-              <div>
-                <h2 className="text-lg font-semibold">
-                  Historique des consommations
-                </h2>
-
-                <p className="mt-1 text-xs text-gray-500">
-                  Solde :{' '}
-                  <span className="text-blue-400">
-                    {
-                      creditState.balance
-                    }
-                  </span>
-                  {' • '}
-                  Consommés :{' '}
-                  <span className="text-gray-300">
-                    {
-                      creditState.consumed
-                    }
-                  </span>
-                </p>
-              </div>
-
+          {generatedCode && (
+            <>
               <button
                 type="button"
                 onClick={() =>
-                  setShowHistory(
-                    false
+                  handleExportHTML()
+                }
+                className="rounded-xl bg-white/5 px-4 py-2 text-sm text-white/70 hover:bg-white/10"
+              >
+                Exporter HTML
+              </button>
+
+              {currentProject.apkStatus ===
+              'ready' ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDownloadAPK(
+                      currentProject
+                    )
+                  }
+                  className="rounded-xl bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/20"
+                >
+                  ⬇ Télécharger APK
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleBuildAPK(
+                      currentProject
+                    )
+                  }
+                  disabled={
+                    currentProject.apkStatus ===
+                    'building'
+                  }
+                  className="rounded-xl bg-white/5 px-4 py-2 text-sm text-white/70 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {getApkLabel(
+                    currentProject
+                  )}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {activeTab === 'prompt' ? (
+          <section className="mt-5 grid flex-1 grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-6">
+              <div className="mb-5">
+                <h2 className="text-xl font-semibold">
+                  Décrivez votre application
+                </h2>
+
+                <p className="mt-1 text-sm text-white/45">
+                  Décrivez précisément ce que vous voulez créer.
+                </p>
+              </div>
+
+              <textarea
+                value={prompt}
+                onChange={(event) =>
+                  setPrompt(
+                    event.target.value
                   )
                 }
-                className="text-xl text-gray-500 hover:text-white"
-              >
-                ×
-              </button>
+                placeholder="Exemple : crée une application de gestion de budget avec revenus, dépenses, catégories, graphiques et stockage local..."
+                className="min-h-[300px] w-full resize-y rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 outline-none transition placeholder:text-white/25 focus:border-white/30 sm:min-h-[400px]"
+              />
+
+              <div className="mt-3 flex flex-col gap-2 text-xs text-white/40 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {promptWords} mots ·{' '}
+                  {promptChars} caractères
+                </div>
+
+                <div>
+                  Solde :{' '}
+                  <span className="text-white/70">
+                    {creditsLabel}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                <select
+                  value={modelVersion}
+                  onChange={(event) =>
+                    setModelVersion(
+                      event.target.value
+                    )
+                  }
+                  className="rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3 text-sm outline-none"
+                >
+                  <option value="google/gemini-3.6-flash">
+                    Gemini 3.6 Flash
+                  </option>
+
+                  <option value="google/gemini-3.5-flash-lite">
+                    Gemini 3.5 Flash Lite
+                  </option>
+
+                  <option value="google/gemini-2.5-flash-lite">
+                    Gemini 2.5 Flash Lite
+                  </option>
+
+                  <option value="openai/gpt-4o-mini">
+                    GPT-4o Mini
+                  </option>
+                </select>
+
+                <button
+                  type="button"
+                  disabled={
+                    !hasPrompt ||
+                    loading
+                  }
+                  onClick={
+                    handleGenerate
+                  }
+                  className="rounded-xl bg-white px-6 py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {loading
+                    ? 'Génération...'
+                    : '✨ Générer'}
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-y-auto p-4">
-              {usageError && (
-                <div className="mb-3 rounded-xl border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">
-                  {usageError}
+            <aside className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+              <h3 className="font-semibold">
+                Informations
+              </h3>
+
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="rounded-xl bg-black/20 p-4">
+                  <div className="text-xs text-white/40">
+                    Modèle
+                  </div>
+
+                  <div className="mt-1">
+                    {formatModel(
+                      modelVersion
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-black/20 p-4">
+                  <div className="text-xs text-white/40">
+                    Crédits disponibles
+                  </div>
+
+                  <div className="mt-1 text-lg font-semibold">
+                    {creditsLabel}
+                  </div>
+                </div>
+
+                {lastUsage && (
+                  <div className="rounded-xl bg-black/20 p-4">
+                    <div className="text-xs text-white/40">
+                      Dernière génération
+                    </div>
+
+                    <div className="mt-2 space-y-1 text-xs">
+                      <div>
+                        Tokens :{' '}
+                        {lastUsage.totalTokens}
+                      </div>
+
+                      <div>
+                        Coût :{' '}
+                        {formatCost(
+                          lastUsage.cost
+                        )}
+                      </div>
+
+                      <div>
+                        Crédits :{' '}
+                        {lastUsage.creditsExact !==
+                        undefined
+                          ? formatCreditsExact(
+                              lastUsage.creditsExact
+                            )
+                          : lastUsage.creditsUsed}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </aside>
+          </section>
+        ) : (
+          <section className="mt-5 flex flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+            <div className="flex flex-col gap-3 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-semibold">
+                  Aperçu de l'application
+                </h2>
+
+                <p className="text-xs text-white/40">
+                  {currentProject.name}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTab(
+                      'prompt'
+                    )
+                  }
+                  className="rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60 hover:bg-white/10"
+                >
+                  Modifier le prompt
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportHTML()
+                  }
+                  className="rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60 hover:bg-white/10"
+                >
+                  Exporter HTML
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-[600px] flex-1 bg-white">
+              {generatedCode ? (
+                <iframe
+                  title="Aperçu de l'application"
+                  srcDoc={
+                    generatedCode
+                  }
+                  className="h-[70vh] min-h-[600px] w-full border-0"
+                  sandbox="allow-scripts allow-forms allow-modals allow-popups"
+                />
+              ) : (
+                <div className="flex h-[600px] items-center justify-center text-black/50">
+                  Aucune application générée.
                 </div>
               )}
+            </div>
+          </section>
+        )}
 
-              {!usageLoaded ? (
-                <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
-                  Chargement de l'historique...
+        {currentProject.apkStatus ===
+          'error' &&
+          currentProject.apkError && (
+            <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              <strong>
+                Erreur APK :
+              </strong>{' '}
+              {currentProject.apkError}
+            </div>
+          )}
+
+        {showHistory && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 px-4 py-8 backdrop-blur-sm">
+            <div className="mx-auto w-full max-w-4xl rounded-2xl border border-white/10 bg-[#0b1120] p-6 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">
+                    Historique
+                  </h2>
+
+                  <p className="mt-1 text-sm text-white/45">
+                    Générations et consommation.
+                  </p>
                 </div>
-              ) : usageHistory.length ===
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowHistory(false)
+                  }
+                  className="rounded-lg px-3 py-2 text-white/50 hover:bg-white/10 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="mt-6 space-y-3">
+                {usageHistory.length ===
                 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-800 p-8 text-center text-sm text-gray-600">
-                  Aucune génération enregistrée sur le compte serveur.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {usageHistory.map(
-                    (
-                      usage
-                    ) => (
+                  <div className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-white/40">
+                    Aucun historique.
+                  </div>
+                ) : (
+                  usageHistory.map(
+                    (usage) => (
                       <div
-                        key={
-                          usage.id
-                        }
-                        className="rounded-xl border border-gray-800 bg-gray-950 p-4"
+                        key={usage.id}
+                        className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
                       >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-white">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <div className="font-medium">
                               {
                                 usage.projectName
                               }
-                            </p>
+                            </div>
 
-                            <p className="mt-1 text-xs text-gray-500">
-                              {formatModel(
-                                usage.model
+                            <div className="text-xs text-white/40">
+                              {new Date(
+                                usage.createdAt
+                              ).toLocaleString(
+                                'fr-FR'
                               )}
-                            </p>
+                            </div>
                           </div>
 
-                          <span className="shrink-0 rounded-full border border-blue-900 bg-blue-950/50 px-2.5 py-1 text-xs font-bold text-blue-400">
-                            -{usage.creditsUsed}{' '}
-                            crédits
-                          </span>
-                        </div>
-
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Prompt
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {
-                                usage.promptWords
-                              }{' '}
-                              mots
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Caractères
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {
-                                usage.promptChars
-                              }
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Tokens
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {usage.totalTokens.toLocaleString()}
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Coût OpenRouter
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {formatCost(
-                                usage.cost
-                              )}
-                            </p>
+                          <div className="text-sm">
+                            {formatCost(
+                              usage.cost
+                            )}
                           </div>
                         </div>
 
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Valeur crédit
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {formatCreditValue(
-                                usage.creditValueUsd
-                              )}
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Crédit exact
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {formatCreditsExact(
-                                usage.creditsExact
-                              )}
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Solde après
-                            </p>
-
-                            <p className="mt-1 font-semibold text-blue-400">
-                              {usage.balanceAfter !==
-                              undefined
-                                ? usage.balanceAfter
-                                : '—'}
-                            </p>
-                          </div>
-
-                          <div className="rounded-lg bg-gray-900 p-2">
-                            <p className="text-gray-600">
-                              Facturation
-                            </p>
-
-                            <p className="mt-1 text-gray-300">
-                              {usage.billingMethod ===
-                              'openrouter_cost'
-                                ? 'Coût réel'
-                                : usage.billingMethod ||
-                                  'Ancienne règle'}
-                            </p>
-                          </div>
+                        <div className="mt-3 text-xs text-white/45">
+                          {formatModel(
+                            usage.model
+                          )}{' '}
+                          ·{' '}
+                          {
+                            usage.promptWords
+                          }{' '}
+                          mots ·{' '}
+                          {
+                            usage.totalTokens
+                          }{' '}
+                          tokens ·{' '}
+                          {
+                            usage.creditsUsed
+                          }{' '}
+                          crédits
                         </div>
-
-                        {usage.billingVersion && (
-                          <p className="mt-2 text-[11px] text-gray-600">
-                            Version de facturation :
-                            {' '}
-                            {
-                              usage.billingVersion
-                            }
-                          </p>
-                        )}
-
-                        <p className="mt-3 text-[11px] text-gray-600">
-                          {new Date(
-                            usage.createdAt
-                          ).toLocaleString(
-                            'fr-FR'
-                          )}
-                        </p>
                       </div>
                     )
-                  )}
+                  )
+                )}
+              </div>
+
+              {usageError && (
+                <div className="mt-4 rounded-xl bg-red-500/10 p-4 text-sm text-red-300">
+                  {usageError}
                 </div>
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </main>
   );
 }

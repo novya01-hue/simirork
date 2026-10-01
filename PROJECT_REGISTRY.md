@@ -14,7 +14,9 @@
 - Dépôt GitHub : `https://github.com/novya01-hue/simirork`
 - Branche principale : `main`
 - Production Vercel : `https://simirork.vercel.app`
-- Autre URL de production observée : `https://simirork-azsenl1cn-debutant2.vercel.app`
+- Déploiement Vercel précédent : `https://simirork-azsenl1cn-debutant2.vercel.app`
+- Dernier déploiement Vercel validé : `https://simirork-oc782x501-debutant2.vercel.app`
+- Alias de production validé : `https://simirork.vercel.app`
 - Projet Vercel : `simirork`
 - Project ID Vercel : `prj_HxkP1BP82ItcUBRzBnHXBlhV3hQl`
 - Équipe Vercel observée : `debutant2`
@@ -810,7 +812,82 @@ npx.cmd cap sync android
 npx.cmd cap open android
 ```
 
-## 30. Vercel
+## 30. Authentification Neon / Better Auth
+
+### Configuration validée le 2026-09-30
+
+SimiRork utilise **Neon Auth / Better Auth** pour l’authentification.
+
+Projet Neon identifié :
+
+```text
+neon-celeste-tree
+```
+
+Branch utilisée :
+
+```text
+main
+```
+
+Service d’authentification :
+
+```text
+Better Auth
+```
+
+Endpoint Neon Auth configuré localement :
+
+```text
+https://ep-steep-river-b7yekvhc.neonauth.c-13.us-east-1.aws.neon.tech/neondb/auth
+```
+
+### Problème rencontré
+
+Après correction de la route de connexion, SimiRork affichait :
+
+```text
+Invalid origin
+```
+
+La cause était l’absence du domaine de production SimiRork dans les **Trusted domains** de Better Auth.
+
+### Solution validée
+
+Dans Neon :
+
+```text
+neon-celeste-tree
+→ main
+→ Better Auth
+→ Configure Auth
+→ Domains
+```
+
+Domaine de confiance ajouté :
+
+```text
+https://simirork.vercel.app
+```
+
+### Test fonctionnel
+
+Résultat après ajout du domaine :
+
+```text
+✅ Page de connexion accessible
+✅ Mot de passe accepté
+✅ Erreur « Invalid origin » supprimée
+✅ Connexion SimiRork réussie
+```
+
+### Règle
+
+Ne pas supprimer `https://simirork.vercel.app` des **Trusted domains** sans raison.
+
+Ne jamais mettre de mot de passe, cookie secret ou autre valeur secrète dans ce registre.
+
+## 31. Vercel
 
 ```powershell
 npx.cmd vercel whoami
@@ -824,7 +901,7 @@ npx.cmd vercel project inspect --non-interactive
 npx.cmd vercel deploy --prod --yes
 ```
 
-## 31. Prochaine stratégie de dépannage
+## 32. Prochaine stratégie de dépannage
 
 Toujours suivre cet ordre :
 
@@ -856,7 +933,7 @@ PROJECT_REGISTRY.md
 
 puis comparer avec le dernier état fonctionnel et le dernier message d’erreur.
 
-## 32. Évolutions prévues / non encore validées
+## 33. Évolutions prévues / non encore validées
 
 Ces sujets sont des améliorations futures et ne doivent pas être considérés comme déjà terminés :
 
@@ -869,7 +946,7 @@ Ces sujets sont des améliorations futures et ne doivent pas être considérés 
 - stockage serveur / synchronisation multi-appareils
 - préparation Play Store
 
-## 33. Référence rapide
+## 34. Référence rapide
 
 ```text
 Projet local
@@ -927,7 +1004,7 @@ Dernier correctif workflow
 05cc8bc
 ```
 
-## 34. Journal des événements techniques connus
+## 35. Journal des événements techniques connus
 
 | Date | Événement | Résultat |
 |---|---|---|
@@ -944,13 +1021,47 @@ Dernier correctif workflow
 | 2026-09-28 | Test MonBudget APK | Réussi |
 | 2026-09-28 | Téléchargement | `monbudget.apk` |
 
-## 35. État de référence
+## 37. État de référence
 
 > **Le pipeline de génération et téléchargement d’APK individuel depuis SimiRork est fonctionnel.**
 >
 > Lorsqu’un nouveau problème apparaît, commencer par le dernier commit fonctionnel, le dernier Run ID et ce registre avant toute nouvelle modification.
 
-## 36. Système de crédits — tarification par coût réel OpenRouter
+## 36. Journal des événements récents — Authentification et déploiement
+
+| Date | Événement | Résultat |
+|---|---|---|
+| 2026-09-30 | Route `/auth/sign-in` en 404 | Diagnostic local réalisé |
+| 2026-09-30 | Route `app/auth/[path]/page.tsx` remplacée par `app/auth/[...path]/page.tsx` | Route dynamique corrigée |
+| 2026-09-30 | Build Next.js après correction Auth | Réussi |
+| 2026-09-30 | Test local `/auth/sign-in` | `HTTP 200 OK` |
+| 2026-09-30 | Test local `/` | `307 → /auth/sign-in` |
+| 2026-09-30 | Commit correction Auth | `de52d10` |
+| 2026-09-30 | Push GitHub | `main → de52d10` |
+| 2026-09-30 | Déploiement Vercel | Réussi, `Ready in 1m` |
+| 2026-09-30 | Alias production | `https://simirork.vercel.app` |
+| 2026-09-30 | Test Vercel `/` | `307 → /auth/sign-in` |
+| 2026-09-30 | Erreur de connexion `Invalid origin` | Identifiée comme problème de Trusted domain Neon |
+| 2026-09-30 | Trusted domain Neon | `https://simirork.vercel.app` ajouté |
+| 2026-09-30 | Test connexion Neon | Réussi |
+
+### État de référence après correction
+
+```text
+https://simirork.vercel.app/
+        ↓
+307 Temporary Redirect
+        ↓
+/auth/sign-in
+        ↓
+HTTP 200 OK
+        ↓
+Connexion Neon / Better Auth
+        ↓
+✅ Connexion réussie
+```
+
+## 38. Système de crédits — tarification par coût réel OpenRouter
 
 ### Mise en place validée le 2026-09-29
 
@@ -1117,7 +1228,7 @@ Ce stockage est adapté au prototype/test mais **ne constitue pas encore un syst
 
 Passer les crédits et l'historique vers un stockage serveur associé à un utilisateur/authentification afin d'éviter qu'un utilisateur puisse modifier son solde directement depuis son navigateur.
 
-## 37. Validation finale — 2026-09-29
+## 39. Validation finale — 2026-09-29
 
 ### Build local
 
@@ -1207,7 +1318,7 @@ arrondi supérieur = 9 crédits
 ✅ Fonctionnement validé sur Vercel
 ```
 
-## 38. Phase suivante — sécurisation réelle des crédits
+## 40. Phase suivante — sécurisation réelle des crédits
 
 État actuel :
 
