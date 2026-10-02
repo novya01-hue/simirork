@@ -306,22 +306,18 @@ jobs:
               encoding="utf-8"
           )
 
-          # Supprimer l'ancien label dynamique.
           text = re.sub(
               r'\s+android:label="@string/title_activity_main"',
               '',
               text
           )
 
-          # Supprimer tout ancien package fixe.
           text = re.sub(
               r'\s+package="[^"]*"',
               '',
               text
           )
 
-          # Garantir que l'application utilise les icones
-          # generees dynamiquement.
           application_match = re.search(
               r'<application\b[^>]*>',
               text
@@ -416,10 +412,6 @@ jobs:
               "simirork-default-project"
           ).strip()
 
-          # ------------------------------------------------------
-          # Initiales visibles
-          # ------------------------------------------------------
-
           normalized = unicodedata.normalize(
               "NFKD",
               app_name
@@ -452,24 +444,11 @@ jobs:
 
           initials = initials[:2]
 
-          # ------------------------------------------------------
-          # IDENTITE STABLE
-          #
-          # Le project_id est l'identite principale.
-          # Donc :
-          # meme projet = meme logo
-          # autre projet = autre logo
-          # ------------------------------------------------------
-
           identity = f"{project_id}|{app_name}"
 
           digest = hashlib.sha256(
               identity.encode("utf-8")
           ).hexdigest()
-
-          # ------------------------------------------------------
-          # Palette deterministe
-          # ------------------------------------------------------
 
           palettes = [
               ("#2563EB", "#93C5FD"),
@@ -492,10 +471,6 @@ jobs:
           background, accent = palettes[
               palette_index
           ]
-
-          # ------------------------------------------------------
-          # Deuxieme variation deterministe
-          # ------------------------------------------------------
 
           rotation = int(
               digest[8:12],
@@ -529,10 +504,6 @@ jobs:
               exist_ok=True
           )
 
-          # ------------------------------------------------------
-          # Couleur de fond
-          # ------------------------------------------------------
-
           (
               values_dir / "app_icon_colors.xml"
           ).write_text(
@@ -545,10 +516,6 @@ jobs:
           ''',
               encoding="utf-8"
           )
-
-          # ------------------------------------------------------
-          # Icone adaptative Android 8+
-          # ------------------------------------------------------
 
           adaptive_xml = '''<?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -675,7 +642,165 @@ jobs:
           echo "Icones generees pour : $APP_NAME"
 
       # ==========================================================
-      # 12. VERIFIER LA CONFIGURATION FINALE
+      # 12. VERIFICATION EXPLICITE DES ICONES GENEREES
+      # ==========================================================
+      - name: Verifier les fichiers d'icone generes
+        run: |
+          set -e
+
+          RES="android/app/src/main/res"
+
+          echo "=========================================="
+          echo "VERIFICATION DES ICONES GENEREES"
+          echo "=========================================="
+
+          # ------------------------------------------------------
+          # 12.1 app_icon_background
+          # ------------------------------------------------------
+
+          ICON_XML="$RES/mipmap-anydpi-v26/ic_launcher.xml"
+
+          [ -f "$ICON_XML" ] || {
+            echo "ERREUR : ic_launcher.xml introuvable."
+            exit 1
+          }
+
+          echo "--- ic_launcher.xml ---"
+          cat "$ICON_XML"
+
+          grep -q \
+            '@color/app_icon_background' \
+            "$ICON_XML" || {
+              echo "ERREUR : ic_launcher.xml ne contient pas app_icon_background."
+              exit 1
+            }
+
+          echo "OK : app_icon_background est bien reference."
+
+          # ------------------------------------------------------
+          # 12.2 foreground PNG
+          # ------------------------------------------------------
+
+          FOREGROUND="$RES/drawable-nodpi/ic_launcher_foreground.png"
+
+          [ -s "$FOREGROUND" ] || {
+            echo "ERREUR : ic_launcher_foreground.png introuvable ou vide."
+            exit 1
+          }
+
+          echo "Foreground :"
+          ls -lh "$FOREGROUND"
+
+          file "$FOREGROUND"
+
+          identify "$FOREGROUND"
+
+          FOREGROUND_FORMAT=$(identify -format '%m' "$FOREGROUND")
+          FOREGROUND_WIDTH=$(identify -format '%w' "$FOREGROUND")
+          FOREGROUND_HEIGHT=$(identify -format '%h' "$FOREGROUND")
+
+          [ "$FOREGROUND_FORMAT" = "PNG" ] || {
+            echo "ERREUR : le foreground n'est pas un PNG."
+            exit 1
+          }
+
+          [ "$FOREGROUND_WIDTH" = "1024" ] || {
+            echo "ERREUR : largeur foreground incorrecte : $FOREGROUND_WIDTH"
+            exit 1
+          }
+
+          [ "$FOREGROUND_HEIGHT" = "1024" ] || {
+            echo "ERREUR : hauteur foreground incorrecte : $FOREGROUND_HEIGHT"
+            exit 1
+          }
+
+          FOREGROUND_SHA256=$(sha256sum "$FOREGROUND" | cut -d' ' -f1)
+
+          echo "SHA256 foreground : $FOREGROUND_SHA256"
+
+          # ------------------------------------------------------
+          # 12.3 PNG ic_launcher
+          # ------------------------------------------------------
+
+          declare -A EXPECTED_ICON_SIZES=(
+            [mdpi]=48
+            [hdpi]=72
+            [xhdpi]=96
+            [xxhdpi]=144
+            [xxxhdpi]=192
+          )
+
+          for density in "${!EXPECTED_ICON_SIZES[@]}"; do
+
+            size="${EXPECTED_ICON_SIZES[$density]}"
+            file_path="$RES/mipmap-${density}/ic_launcher.png"
+
+            [ -s "$file_path" ] || {
+              echo "ERREUR : $file_path introuvable ou vide."
+              exit 1
+            }
+
+            width=$(identify -format '%w' "$file_path")
+            height=$(identify -format '%h' "$file_path")
+
+            [ "$width" = "$size" ] || {
+              echo "ERREUR : largeur incorrecte pour $file_path : $width"
+              exit 1
+            }
+
+            [ "$height" = "$size" ] || {
+              echo "ERREUR : hauteur incorrecte pour $file_path : $height"
+              exit 1
+            }
+
+            format=$(identify -format '%m' "$file_path")
+
+            [ "$format" = "PNG" ] || {
+              echo "ERREUR : $file_path n'est pas un PNG."
+              exit 1
+            }
+
+            echo "OK : $file_path (${width}x${height})"
+          done
+
+          # ------------------------------------------------------
+          # 12.4 ic_launcher_round
+          # ------------------------------------------------------
+
+          for density in "${!EXPECTED_ICON_SIZES[@]}"; do
+
+            file_path="$RES/mipmap-${density}/ic_launcher_round.png"
+
+            [ -s "$file_path" ] || {
+              echo "ERREUR : $file_path introuvable ou vide."
+              exit 1
+            }
+
+            echo "OK : $file_path"
+          done
+
+          # ------------------------------------------------------
+          # 12.5 Aucun ancien foreground XML
+          # ------------------------------------------------------
+
+          test ! -f \
+            "$RES/drawable-v24/ic_launcher_foreground.xml" || {
+              echo "ERREUR : ancien foreground XML encore present."
+              exit 1
+            }
+
+          test ! -f \
+            "$RES/drawable/ic_launcher_foreground.xml" || {
+              echo "ERREUR : ancien foreground XML encore present."
+              exit 1
+            }
+
+          echo "=========================================="
+          echo "VERIFICATION ICONES : OK"
+          echo "=========================================="
+
+      # ==========================================================
+      # 13. VERIFIER LA CONFIGURATION FINALE
       # ==========================================================
       - name: Verifier la configuration finale
         env:
@@ -721,37 +846,16 @@ jobs:
 
           test -s public/index.html
 
-          test -s \
-            android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png
-
-          test -s \
-            android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-
-          test -s \
-            android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-
-          test -s \
-            android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-
-          test -s \
-            android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-
-          test -s \
-            android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-
           test -f \
             android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 
           test -f \
             android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
-          test ! -f \
-            android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
-
-          echo "Verification OK."
+          echo "Verification configuration OK."
 
       # ==========================================================
-      # 13. GRADLE
+      # 14. GRADLE
       # ==========================================================
       - name: Preparer Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -760,14 +864,161 @@ jobs:
         run: chmod +x android/gradlew
 
       # ==========================================================
-      # 14. CONSTRUIRE L'APK
+      # 15. CONSTRUIRE L'APK
       # ==========================================================
       - name: Construire l'APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
       # ==========================================================
-      # 15. PREPARER L'APK FINAL
+      # 16. INSPECTER L'APK AVANT PUBLICATION
+      # ==========================================================
+      - name: Inspecter l'APK final avant publication
+        env:
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+        run: |
+          set -e
+
+          APK_SOURCE="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          [ -s "$APK_SOURCE" ] || {
+            echo "ERREUR : APK Gradle introuvable ou vide."
+            exit 1
+          }
+
+          echo "=========================================="
+          echo "INSPECTION APK FINAL"
+          echo "=========================================="
+
+          echo "APK : $APK_SOURCE"
+          ls -lh "$APK_SOURCE"
+
+          echo ""
+          echo "SHA256 APK :"
+          sha256sum "$APK_SOURCE"
+
+          echo ""
+          echo "=========================================="
+          echo "1. VERIFICATION PACKAGE"
+          echo "=========================================="
+
+          BADGING=$(aapt dump badging "$APK_SOURCE")
+
+          printf '%s\n' "$BADGING"
+
+          echo "$BADGING" \
+            | grep -Fq "package: name='$APPLICATION_ID'" || {
+              echo "ERREUR : applicationId dans l'APK incorrect."
+              echo "Attendu : $APPLICATION_ID"
+              exit 1
+            }
+
+          echo "OK : applicationId APK = $APPLICATION_ID"
+
+          echo ""
+          echo "=========================================="
+          echo "2. VERIFICATION NOM APPLICATION"
+          echo "=========================================="
+
+          echo "$BADGING" \
+            | grep -Fq "application-label:'$APP_NAME'" || {
+              echo "ERREUR : nom de l'application incorrect dans l'APK."
+              echo "Attendu : $APP_NAME"
+              exit 1
+            }
+
+          echo "OK : nom APK = $APP_NAME"
+
+          echo ""
+          echo "=========================================="
+          echo "3. CONTENU DES RESSOURCES ICONES"
+          echo "=========================================="
+
+          unzip -l "$APK_SOURCE" \
+            | grep -E \
+              'res/(mipmap|drawable).*(ic_launcher|ic_launcher_foreground)' \
+              || true
+
+          echo ""
+          echo "Recherche des icones PNG..."
+
+          ICON_COUNT=$(unzip -l "$APK_SOURCE" \
+            | grep -E \
+              'res/mipmap-[^/]+/ic_launcher\.png' \
+            | wc -l)
+
+          echo "Nombre de ic_launcher.png dans APK : $ICON_COUNT"
+
+          [ "$ICON_COUNT" -ge 5 ] || {
+            echo "ERREUR : les icones PNG attendues ne sont pas toutes dans l'APK."
+            exit 1
+          }
+
+          echo "OK : les PNG ic_launcher sont presents dans l'APK."
+
+          echo ""
+          echo "=========================================="
+          echo "4. VERIFICATION FOREGROUND"
+          echo "=========================================="
+
+          FOREGROUND_APK_COUNT=$(unzip -l "$APK_SOURCE" \
+            | grep -E \
+              'ic_launcher_foreground.*\.png' \
+            | wc -l)
+
+          echo "Occurrences foreground dans APK : $FOREGROUND_APK_COUNT"
+
+          [ "$FOREGROUND_APK_COUNT" -ge 1 ] || {
+            echo "ERREUR : ic_launcher_foreground.png absent de l'APK final."
+            exit 1
+          }
+
+          echo "OK : foreground present dans l'APK."
+
+          echo ""
+          echo "=========================================="
+          echo "5. VERIFICATION ICONE DECLAREE"
+          echo "=========================================="
+
+          echo "$BADGING" \
+            | grep -E \
+              'application-icon-[0-9]+:' \
+              || true
+
+          echo "$BADGING" \
+            | grep -q \
+              "application-icon-" || {
+                echo "ERREUR : aucune icone application declaree dans le badging APK."
+                exit 1
+              }
+
+          echo "OK : Android reconnait une icone d'application."
+
+          echo ""
+          echo "=========================================="
+          echo "6. TEST INTEGRITE APK"
+          echo "=========================================="
+
+          unzip -t "$APK_SOURCE" > apk-unzip-test.txt
+
+          grep -q \
+            "No errors detected" \
+            apk-unzip-test.txt || {
+              echo "ERREUR : l'APK contient des erreurs ZIP."
+              cat apk-unzip-test.txt
+              exit 1
+            }
+
+          echo "OK : archive APK integre."
+
+          echo ""
+          echo "=========================================="
+          echo "INSPECTION APK : OK"
+          echo "=========================================="
+
+      # ==========================================================
+      # 17. PREPARER L'APK FINAL
       # ==========================================================
       - name: Preparer le fichier APK final
         env:
@@ -788,7 +1039,7 @@ jobs:
           ls -lh generated-apk/
 
       # ==========================================================
-      # 16. PUBLIER L'APK
+      # 18. PUBLIER L'APK
       # ==========================================================
       - name: Publier l'APK
         uses: actions/upload-artifact@v6
@@ -796,4 +1047,3 @@ jobs:
           name: ${{ steps.app_info.outputs.apk_filename }}
           path: generated-apk/*.apk
           if-no-files-found: error
-
