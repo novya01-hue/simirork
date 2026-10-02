@@ -26,6 +26,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+
+      - name: Installer les dependances npm
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "INSTALLATION DES DEPENDANCES NPM"
+          echo "=========================================="
+
+          npm ci
 
       - name: Installer les outils Android
         uses: android-actions/setup-android@v3
@@ -59,10 +71,38 @@ jobs:
           adb version
 
           echo ""
+          echo "Capacitor :"
+          npx cap --version
+
+          echo ""
           echo "ANDROID_HOME :"
           echo "${ANDROID_HOME:-non defini}"
 
           echo "=========================================="
+
+      - name: Synchroniser Capacitor Android
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "SYNCHRONISATION CAPACITOR ANDROID"
+          echo "=========================================="
+
+          npx cap sync android
+
+          echo ""
+          echo "Verification du dossier Cordova Android..."
+
+          if [ ! -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
+            echo "ERREUR : cordova.variables.gradle est toujours absent."
+            echo ""
+            echo "Contenu de android :"
+            find android -maxdepth 3 -type f | sort | head -200
+            exit 1
+          fi
+
+          echo "cordova.variables.gradle trouve."
 
       - name: Recuperer le HTML
         id: html
@@ -195,6 +235,7 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
+          import re
 
           application_id = os.environ["APPLICATION_ID"]
           app_name = os.environ["APP_NAME"]
@@ -211,7 +252,7 @@ jobs:
 
               text = text.replace(
                   'android:label="SimiRork"',
-                  f'android:label="{app_name}"'
+                  'android:label="@string/app_name"'
               )
 
               manifest.write_text(text, encoding="utf-8")
@@ -220,8 +261,6 @@ jobs:
 
           if build_gradle.exists():
               text = build_gradle.read_text(encoding="utf-8")
-
-              import re
 
               text = re.sub(
                   r'applicationId\s+"[^"]+"',
@@ -235,8 +274,6 @@ jobs:
 
           if build_gradle_kts.exists():
               text = build_gradle_kts.read_text(encoding="utf-8")
-
-              import re
 
               text = re.sub(
                   r'applicationId\s*=\s*"[^"]+"',
@@ -301,7 +338,10 @@ jobs:
                   struct.pack(">I", len(data))
                   + chunk_type
                   + data
-                  + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xffffffff)
+                  + struct.pack(
+                      ">I",
+                      zlib.crc32(chunk_type + data) & 0xffffffff
+                  )
               )
 
           raw = bytearray()
@@ -355,9 +395,6 @@ jobs:
           for folder, target_size in densities.items():
               directory = base / folder
               directory.mkdir(parents=True, exist_ok=True)
-
-              # L'icone 192x192 est conservee pour toutes les densites.
-              # Android gere ensuite le redimensionnement.
               (directory / "ic_launcher.png").write_bytes(png)
 
           anydpi = base / "mipmap-anydpi-v26"
@@ -391,11 +428,16 @@ jobs:
               content = existing.rstrip()
 
               if not content:
-                  content = '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n</resources>'
+                  content = (
+                      '<?xml version="1.0" encoding="utf-8"?>\n'
+                      '<resources>\n'
+                      '</resources>'
+                  )
 
               content = content.replace(
                   "</resources>",
-                  f'    <color name="ic_launcher_background">#{r:02X}{g:02X}{b:02X}</color>\n</resources>'
+                  f'    <color name="ic_launcher_background">#{r:02X}{g:02X}{b:02X}</color>\n'
+                  "</resources>"
               )
 
               values_file.write_text(content, encoding="utf-8")
@@ -449,22 +491,29 @@ jobs:
           path = Path("android/app/src/main/AndroidManifest.xml")
           text = path.read_text(encoding="utf-8")
 
-          text = re.sub(
-              r'android:icon="[^"]+"',
-              'android:icon="@mipmap/ic_launcher"',
-              text
-          )
-
-          text = re.sub(
-              r'android:roundIcon="[^"]+"',
-              'android:roundIcon="@mipmap/ic_launcher"',
-              text
-          )
-
-          if "android:icon=" not in text:
+          if 'android:icon=' in text:
+              text = re.sub(
+                  r'android:icon="[^"]+"',
+                  'android:icon="@mipmap/ic_launcher"',
+                  text
+              )
+          else:
               text = text.replace(
                   "<application",
-                  '<application android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"',
+                  '<application android:icon="@mipmap/ic_launcher"',
+                  1
+              )
+
+          if 'android:roundIcon=' in text:
+              text = re.sub(
+                  r'android:roundIcon="[^"]+"',
+                  'android:roundIcon="@mipmap/ic_launcher"',
+                  text
+              )
+          else:
+              text = text.replace(
+                  '<application ',
+                  '<application android:roundIcon="@mipmap/ic_launcher" ',
                   1
               )
 
@@ -506,6 +555,10 @@ jobs:
             -print
 
           echo ""
+          echo "Capacitor Cordova :"
+          ls -lh android/capacitor-cordova-android-plugins/cordova.variables.gradle
+
+          echo ""
           echo "Assets :"
           ls -lh android/app/src/main/assets/index.html
 
@@ -527,7 +580,6 @@ jobs:
 
       - name: Renommer l'APK
         env:
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
           SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
         shell: bash
         run: |
@@ -549,7 +601,6 @@ jobs:
           fi
 
           OUTPUT_DIR="android/app/build/outputs/apk/debug"
-
           FINAL_APK="$OUTPUT_DIR/${SAFE_NAME}.apk"
 
           cp "$APK" "$FINAL_APK"
@@ -595,4 +646,4 @@ jobs:
           name: apk-${{ steps.identity.outputs.safe_name }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 7
+           retention-days: 7
