@@ -1,4 +1,4 @@
-import AdmZip from 'adm-zip';
+﻿import AdmZip from 'adm-zip';
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     }
 
     const artifactsResponse = await fetch(
-      `https://api.github.com/repos/${OWNER}/${REPO}/actions/runs/${runId}/artifacts?name=simirork-apk`,
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/runs/${runId}/artifacts`,
       {
         headers: {
           Accept: 'application/vnd.github+json',
