@@ -25,10 +25,12 @@ jobs:
         id: app_info
         env:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
+          PROJECT_ID_INPUT: ${{ github.event.client_payload.project_id }}
         run: |
           set -e
 
           APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
+          PROJECT_ID="${PROJECT_ID_INPUT:-simirork-default-project}"
 
           APP_NAME=$(printf '%s' "$APP_NAME" \
             | tr '\r\n\t' ' ' \
@@ -36,6 +38,13 @@ jobs:
             | sed 's/^ *//;s/ *$//')
 
           [ -n "$APP_NAME" ] || APP_NAME="SimiRork App"
+
+          PROJECT_ID=$(printf '%s' "$PROJECT_ID" \
+            | tr '\r\n\t' ' ' \
+            | sed 's/[[:space:]][[:space:]]*/ /g' \
+            | sed 's/^ *//;s/ *$//')
+
+          [ -n "$PROJECT_ID" ] || PROJECT_ID="simirork-default-project"
 
           ASCII_NAME=$(printf '%s' "$APP_NAME" \
             | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
@@ -71,11 +80,13 @@ jobs:
           APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.${HASH_SEGMENT}"
 
           echo "Nom application : $APP_NAME"
+          echo "Project ID      : $PROJECT_ID"
           echo "Application ID  : $APPLICATION_ID"
           echo "Nom fichier APK : $APK_FILENAME"
 
           {
             echo "app_name=$APP_NAME"
+            echo "project_id=$PROJECT_ID"
             echo "application_id=$APPLICATION_ID"
             echo "apk_filename=$APK_FILENAME"
           } >> "$GITHUB_OUTPUT"
@@ -277,8 +288,7 @@ jobs:
           # AndroidManifest.xml
           # ------------------------------------------------------
 
-          MANIFEST_FILE=\
-          "android/app/src/main/AndroidManifest.xml"
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
 
           [ -f "$MANIFEST_FILE" ] || {
             echo "ERREUR : AndroidManifest.xml introuvable."
@@ -290,29 +300,63 @@ jobs:
           import re
           from pathlib import Path
 
-          path = Path(
-              os.environ["MANIFEST_FILE"]
-          )
+          path = Path(os.environ["MANIFEST_FILE"])
 
           text = path.read_text(
               encoding="utf-8"
           )
 
-          # Supprime le label de MainActivity afin que le nom
-          # dynamique de l'application soit utilisé.
-
+          # Supprimer l'ancien label dynamique.
           text = re.sub(
               r'\s+android:label="@string/title_activity_main"',
               '',
               text
           )
 
-          # Aucun ancien package fixe dans le manifeste.
-
+          # Supprimer tout ancien package fixe.
           text = re.sub(
               r'\s+package="[^"]*"',
               '',
               text
+          )
+
+          # Garantir que l'application utilise les icones
+          # generees dynamiquement.
+          application_match = re.search(
+              r'<application\b[^>]*>',
+              text
+          )
+
+          if not application_match:
+              raise SystemExit(
+                  "ERREUR : balise application introuvable."
+              )
+
+          application_tag = application_match.group(0)
+
+          application_tag = re.sub(
+              r'\s+android:icon="[^"]*"',
+              '',
+              application_tag
+          )
+
+          application_tag = re.sub(
+              r'\s+android:roundIcon="[^"]*"',
+              '',
+              application_tag
+          )
+
+          application_tag = application_tag[:-1]
+
+          application_tag += (
+              ' android:icon="@mipmap/ic_launcher"'
+              ' android:roundIcon="@mipmap/ic_launcher_round">'
+          )
+
+          text = (
+              text[:application_match.start()]
+              + application_tag
+              + text[application_match.end():]
           )
 
           path.write_text(
@@ -322,8 +366,7 @@ jobs:
           PY
 
           # ------------------------------------------------------
-          # Supprimer les anciennes icones qui pourraient prendre
-          # le dessus sur celles generees pour l'application.
+          # Supprimer les anciennes icones
           # ------------------------------------------------------
 
           rm -f \
@@ -338,11 +381,12 @@ jobs:
           echo "Identite Android appliquee."
 
       # ==========================================================
-      # 11. GENERER L'ICONE SPECIFIQUE DE L'APPLICATION
+      # 11. GENERER L'ICONE UNIQUE ET DETERMINISTE
       # ==========================================================
       - name: Generer l'icone specifique de l'application
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          PROJECT_ID: ${{ steps.app_info.outputs.project_id }}
         run: |
           set -e
 
@@ -353,7 +397,9 @@ jobs:
               fonts-dejavu
           fi
 
-          APP_NAME="$APP_NAME" python3 - <<'PY'
+          APP_NAME="$APP_NAME" \
+          PROJECT_ID="$PROJECT_ID" \
+          python3 - <<'PY'
           import hashlib
           import os
           import re
@@ -365,6 +411,15 @@ jobs:
               "SimiRork App"
           ).strip()
 
+          project_id = os.environ.get(
+              "PROJECT_ID",
+              "simirork-default-project"
+          ).strip()
+
+          # ------------------------------------------------------
+          # Initiales visibles
+          # ------------------------------------------------------
+
           normalized = unicodedata.normalize(
               "NFKD",
               app_name
@@ -375,16 +430,46 @@ jobs:
               if not unicodedata.combining(c)
           )
 
-          letters = re.findall(
-              r"[A-Za-z]",
-              ascii_name.upper()
+          words = re.findall(
+              r"[A-Za-z]+",
+              ascii_name
           )
 
-          initials = "".join(
-              letters[:2]
-          ) or "SR"
+          if len(words) >= 2:
+              initials = (
+                  words[0][0]
+                  + words[1][0]
+              ).upper()
+          else:
+              letters = re.findall(
+                  r"[A-Za-z]",
+                  ascii_name.upper()
+              )
+
+              initials = "".join(
+                  letters[:2]
+              ) or "SR"
 
           initials = initials[:2]
+
+          # ------------------------------------------------------
+          # IDENTITE STABLE
+          #
+          # Le project_id est l'identite principale.
+          # Donc :
+          # meme projet = meme logo
+          # autre projet = autre logo
+          # ------------------------------------------------------
+
+          identity = f"{project_id}|{app_name}"
+
+          digest = hashlib.sha256(
+              identity.encode("utf-8")
+          ).hexdigest()
+
+          # ------------------------------------------------------
+          # Palette deterministe
+          # ------------------------------------------------------
 
           palettes = [
               ("#2563EB", "#93C5FD"),
@@ -399,14 +484,23 @@ jobs:
               ("#0F766E", "#99F6E4"),
           ]
 
-          digest = hashlib.sha256(
-              app_name.encode("utf-8")
-          ).hexdigest()
+          palette_index = int(
+              digest[:8],
+              16
+          ) % len(palettes)
 
           background, accent = palettes[
-              int(digest[:8], 16)
-              % len(palettes)
+              palette_index
           ]
+
+          # ------------------------------------------------------
+          # Deuxieme variation deterministe
+          # ------------------------------------------------------
+
+          rotation = int(
+              digest[8:12],
+              16
+          ) % 360
 
           res = Path(
               "android/app/src/main/res"
@@ -435,7 +529,9 @@ jobs:
               exist_ok=True
           )
 
-          # Couleur de fond de l'icone.
+          # ------------------------------------------------------
+          # Couleur de fond
+          # ------------------------------------------------------
 
           (
               values_dir / "app_icon_colors.xml"
@@ -450,7 +546,9 @@ jobs:
               encoding="utf-8"
           )
 
-          # Icone adaptative.
+          # ------------------------------------------------------
+          # Icone adaptative Android 8+
+          # ------------------------------------------------------
 
           adaptive_xml = '''<?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -475,8 +573,6 @@ jobs:
               encoding="utf-8"
           )
 
-          # Transmettre les valeurs au shell du meme step.
-
           with open(
               os.environ["GITHUB_ENV"],
               "a",
@@ -495,19 +591,26 @@ jobs:
                   f"ICON_ACCENT={accent}\n"
               )
 
+              env_file.write(
+                  f"ICON_ROTATION={rotation}\n"
+              )
+
           print("==========================================")
           print("ICONE APPLICATION")
           print("==========================================")
           print(f"Application : {app_name}")
+          print(f"Project ID  : {project_id}")
           print(f"Initiales   : {initials}")
           print(f"Couleur     : {background}")
           print(f"Accent      : {accent}")
+          print(f"Rotation    : {rotation}")
+          print(f"Hash        : {digest[:16]}")
           print("==========================================")
           PY
 
-          # ------------------------------------------------------
-          # Foreground transparent pour les icones adaptatives.
-          # ------------------------------------------------------
+          # ======================================================
+          # FOREGROUND TRANSPARENT
+          # ======================================================
 
           convert \
             -size 1024x1024 \
@@ -521,9 +624,9 @@ jobs:
             -draw "roundrectangle 760,150 846,236 26,26" \
             android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png
 
-          # ------------------------------------------------------
-          # Icone complete pour les anciens Android.
-          # ------------------------------------------------------
+          # ======================================================
+          # ICONE COMPLETE POUR ANCIENS ANDROID
+          # ======================================================
 
           convert \
             -size 1024x1024 \
@@ -536,6 +639,10 @@ jobs:
             -fill "$ICON_ACCENT" \
             -draw "roundrectangle 760,150 846,236 26,26" \
             generated-app-icon.png
+
+          # ======================================================
+          # GENERER LES DENSITES ANDROID
+          # ======================================================
 
           declare -A ICON_SIZES=(
             [mdpi]=48
@@ -574,6 +681,7 @@ jobs:
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
           APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+          PROJECT_ID: ${{ steps.app_info.outputs.project_id }}
         run: |
           set -e
 
@@ -581,6 +689,7 @@ jobs:
           echo "CONFIGURATION APK"
           echo "=========================================="
           echo "Nom            : $APP_NAME"
+          echo "Project ID     : $PROJECT_ID"
           echo "Application ID : $APPLICATION_ID"
           echo "=========================================="
 
@@ -603,9 +712,12 @@ jobs:
             android/app/src/main/res/values/strings.xml
 
           grep -n \
-            'android:label' \
-            android/app/src/main/AndroidManifest.xml \
-            || true
+            'android:icon' \
+            android/app/src/main/AndroidManifest.xml
+
+          grep -n \
+            'android:roundIcon' \
+            android/app/src/main/AndroidManifest.xml
 
           test -s public/index.html
 
@@ -626,6 +738,12 @@ jobs:
 
           test -s \
             android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          test -f \
+            android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+
+          test -f \
+            android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
           test ! -f \
             android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
@@ -678,3 +796,4 @@ jobs:
           name: ${{ steps.app_info.outputs.apk_filename }}
           path: generated-apk/*.apk
           if-no-files-found: error
+
