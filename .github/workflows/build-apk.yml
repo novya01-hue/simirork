@@ -759,4 +759,4 @@ jobs:
           name: apk-${{ steps.identity.outputs.safe_name }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-         retention-days: 7
+          retention-days: 7
