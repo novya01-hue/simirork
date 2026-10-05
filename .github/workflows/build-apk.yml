@@ -180,12 +180,28 @@ jobs:
 
           SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
 
-          APPLICATION_ID="com.yoski.app.${SAFE_NAME}.${HASH:0:8}"
+          # Chaque segment doit commencer par une lettre.
+          # Cela garantit un applicationId Android valide mÃªme si
+          # le nom de l'application commence par un chiffre.
+          if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
+            SAFE_NAME="app_${SAFE_NAME}"
+          fi
+
+          # Le prefixe "h" garantit que le segment du hash commence
+          # toujours par une lettre.
+          APPLICATION_ID="com.yoski.app.${SAFE_NAME}.h${HASH:0:8}"
+
+          # Verification stricte de l'applicationId Android.
+          if [[ ! "$APPLICATION_ID" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
+            echo "ERREUR : Application ID Android invalide : $APPLICATION_ID"
+            exit 1
+          fi
 
           echo ""
           echo "Nom            : $APP_NAME"
           echo "Project ID     : $PROJECT_ID"
           echo "Hash           : $HASH"
+          echo "Safe name      : $SAFE_NAME"
           echo "Application ID : $APPLICATION_ID"
           echo ""
 
