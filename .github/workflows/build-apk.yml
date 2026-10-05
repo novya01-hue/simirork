@@ -158,8 +158,8 @@ jobs:
           APP_NAME="$APP_NAME_INPUT"
           PROJECT_ID="$PROJECT_ID_INPUT"
 
-          echo "Nom reçu        : $APP_NAME"
-          echo "Project ID reçu : $PROJECT_ID"
+          echo "Nom recu        : $APP_NAME"
+          echo "Project ID recu : $PROJECT_ID"
 
           echo "=========================================="
           echo "GENERATION DE L'IDENTITE DETERMINISTE"
@@ -419,6 +419,17 @@ jobs:
           values = base / "values"
           values.mkdir(parents=True, exist_ok=True)
 
+          # Supprimer l'ancien fichier s'il existe afin d'eviter
+          # un doublon avec la ressource generee dans colors.xml.
+          legacy_background = values / "ic_launcher_background.xml"
+
+          if legacy_background.exists():
+              legacy_background.unlink()
+              print(
+                  "Ancien fichier ic_launcher_background.xml supprime "
+                  "pour eviter un doublon."
+              )
+
           values_file = values / "colors.xml"
 
           existing = ""
@@ -443,7 +454,7 @@ jobs:
 
               values_file.write_text(content, encoding="utf-8")
 
-          print(f"Icône générée pour : {app_name}")
+          print(f"Icone generee pour : {app_name}")
           print(f"Couleur : #{r:02X}{g:02X}{b:02X}")
           PY
 
@@ -549,11 +560,15 @@ jobs:
           grep -n "applicationId" android/app/build.gradle android/app/build.gradle.kts 2>/dev/null || true
 
           echo ""
-          echo "Icônes :"
+          echo "Icones :"
           find android/app/src/main/res \
             \( -name "ic_launcher*" -o -name "*launcher*" \) \
             -type f \
             -print
+
+          echo ""
+          echo "Ressource couleur launcher :"
+          grep -R -n "ic_launcher_background" android/app/src/main/res/values || true
 
           echo ""
           echo "Capacitor Cordova :"
