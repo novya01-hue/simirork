@@ -181,7 +181,7 @@ jobs:
           SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
 
           # Chaque segment doit commencer par une lettre.
-          # Cela garantit un applicationId Android valide mÃªme si
+          # Cela garantit un applicationId Android valide meme si
           # le nom de l'application commence par un chiffre.
           if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
             SAFE_NAME="app_${SAFE_NAME}"
@@ -303,6 +303,63 @@ jobs:
           print("Configuration Android preparee.")
           PY
 
+      - name: Configurer Capacitor pour l'APK local
+        env:
+          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
+          APP_NAME: ${{ steps.identity.outputs.app_name }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "CONFIGURATION CAPACITOR APK LOCAL"
+          echo "=========================================="
+
+          CONFIG="android/app/src/main/assets/capacitor.config.json"
+
+          if [ ! -f "$CONFIG" ]; then
+            echo "ERREUR : capacitor.config.json absent."
+            echo ""
+            echo "Contenu des assets Android :"
+            find android/app/src/main/assets -maxdepth 2 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("android/app/src/main/assets/capacitor.config.json")
+
+          data = json.loads(
+              path.read_text(encoding="utf-8")
+          )
+
+          server = data.get("server")
+
+          if isinstance(server, dict):
+              server.pop("url", None)
+
+              if not server:
+                  data.pop("server", None)
+
+          data["appId"] = os.environ["APPLICATION_ID"]
+          data["appName"] = os.environ["APP_NAME"]
+          data["webDir"] = "public"
+
+          path.write_text(
+              json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8"
+          )
+
+          print("Configuration Capacitor locale appliquee.")
+          print("server.url : supprime")
+          print("appId      :", data["appId"])
+          print("appName    :", data["appName"])
+          print("webDir     :", data["webDir"])
+          PY
+
       - name: Injecter le HTML
         shell: bash
         run: |
@@ -312,11 +369,19 @@ jobs:
           echo "INJECTION DU HTML"
           echo "=========================================="
 
-          mkdir -p android/app/src/main/assets
+          WEB_ASSETS="android/app/src/main/assets/public"
 
-          cp generated.html android/app/src/main/assets/index.html
+          mkdir -p "$WEB_ASSETS"
 
-          echo "HTML copie dans les assets Android."
+          cp generated.html "$WEB_ASSETS/index.html"
+
+          if [ ! -s "$WEB_ASSETS/index.html" ]; then
+            echo "ERREUR : index.html genere est vide."
+            exit 1
+          fi
+
+          echo "HTML copie dans : $WEB_ASSETS/index.html"
+          echo "Taille : $(wc -c < "$WEB_ASSETS/index.html") octets"
 
       - name: Generer l'icone unique
         env:
@@ -569,6 +634,7 @@ jobs:
 
           echo ""
           echo "Manifest :"
+          grep -n "manifest" android/app/src/main/AndroidManifest.xml || true
           grep -n "application" android/app/src/main/AndroidManifest.xml || true
 
           echo ""
@@ -587,13 +653,28 @@ jobs:
           grep -R -n "ic_launcher_background" android/app/src/main/res/values || true
 
           echo ""
+          echo "Capacitor config :"
+          cat android/app/src/main/assets/capacitor.config.json
+
+          echo ""
+          echo "HTML embarque :"
+          ls -lh android/app/src/main/assets/public/index.html
+
+          echo ""
+          echo "Verification absence URL SimiRork :"
+          if grep -n "https://simirork.vercel.app" \
+            android/app/src/main/assets/capacitor.config.json; then
+            echo "ERREUR : l'URL SimiRork est toujours presente dans la configuration APK."
+            exit 1
+          fi
+
+          echo "URL SimiRork absente de la configuration APK."
+
+          echo ""
           echo "Capacitor Cordova :"
           ls -lh android/capacitor-cordova-android-plugins/cordova.variables.gradle
 
           echo ""
-          echo "Assets :"
-          ls -lh android/app/src/main/assets/index.html
-
           echo "=========================================="
 
       - name: Construire l'APK
@@ -678,4 +759,4 @@ jobs:
           name: apk-${{ steps.identity.outputs.safe_name }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 7
+         retention-days: 7
