@@ -321,7 +321,10 @@ jobs:
             echo "ERREUR : capacitor.config.json absent."
             echo ""
             echo "Contenu des assets Android :"
-            find android/app/src/main/assets -maxdepth 2 -type f -print 2>/dev/null || true
+            find android/app/src/main/assets \
+              -maxdepth 2 \
+              -type f \
+              -print 2>/dev/null || true
             exit 1
           fi
 
@@ -392,7 +395,7 @@ jobs:
           set -e
 
           echo "=========================================="
-          echo "GENERATION DE L'ICONE"
+          echo "GENERATION DE L'ICONE PERSONNALISEE"
           echo "=========================================="
 
           python3 - <<'PY'
@@ -405,66 +408,169 @@ jobs:
           app_name = os.environ["APP_NAME"]
           hash_value = os.environ["HASH"]
 
+          # ---------------------------------------------------------
+          # IDENTITE DETERMINISTE
+          # ---------------------------------------------------------
+
           digest = hashlib.sha256(
               f"{app_name}|{hash_value}".encode("utf-8")
           ).digest()
 
-          r = 40 + digest[0] % 180
-          g = 40 + digest[1] % 180
-          b = 40 + digest[2] % 180
+          palette = [
+              (15, 76, 129),
+              (16, 87, 78),
+              (83, 55, 122),
+              (128, 52, 52),
+              (38, 78, 94),
+              (92, 69, 35),
+              (72, 55, 110),
+              (21, 94, 67),
+              (56, 68, 110),
+              (105, 52, 76),
+              (42, 82, 104),
+              (91, 61, 43),
+          ]
 
-          size = 192
+          background = palette[digest[0] % len(palette)]
+          r, g, b = background
 
-          def chunk(chunk_type, data):
+          letter = next(
+              (
+                  char.upper()
+                  for char in app_name
+                  if char.isascii() and char.isalnum()
+              ),
+              "A"
+          )
+
+          # ---------------------------------------------------------
+          # POLICE 5x7 SANS DEPENDANCE EXTERNE
+          # ---------------------------------------------------------
+
+          FONT = {
+              "A": ["01110","10001","10001","11111","10001","10001","10001"],
+              "B": ["11110","10001","10001","11110","10001","10001","11110"],
+              "C": ["01111","10000","10000","10000","10000","10000","01111"],
+              "D": ["11110","10001","10001","10001","10001","10001","11110"],
+              "E": ["11111","10000","10000","11110","10000","10000","11111"],
+              "F": ["11111","10000","10000","11110","10000","10000","10000"],
+              "G": ["01111","10000","10000","10111","10001","10001","01111"],
+              "H": ["10001","10001","10001","11111","10001","10001","10001"],
+              "I": ["11111","00100","00100","00100","00100","00100","11111"],
+              "J": ["00111","00010","00010","00010","00010","10010","01100"],
+              "K": ["10001","10010","10100","11000","10100","10010","10001"],
+              "L": ["10000","10000","10000","10000","10000","10000","11111"],
+              "M": ["10001","11011","10101","10101","10001","10001","10001"],
+              "N": ["10001","11001","10101","10011","10001","10001","10001"],
+              "O": ["01110","10001","10001","10001","10001","10001","01110"],
+              "P": ["11110","10001","10001","11110","10000","10000","10000"],
+              "Q": ["01110","10001","10001","10001","10101","10010","01101"],
+              "R": ["11110","10001","10001","11110","10100","10010","10001"],
+              "S": ["01111","10000","10000","01110","00001","00001","11110"],
+              "T": ["11111","00100","00100","00100","00100","00100","00100"],
+              "U": ["10001","10001","10001","10001","10001","10001","01110"],
+              "V": ["10001","10001","10001","10001","10001","01010","00100"],
+              "W": ["10001","10001","10001","10101","10101","11011","10001"],
+              "X": ["10001","10001","01010","00100","01010","10001","10001"],
+              "Y": ["10001","10001","01010","00100","00100","00100","00100"],
+              "Z": ["11111","00001","00010","00100","01000","10000","11111"],
+              "0": ["01110","10001","10011","10101","11001","10001","01110"],
+              "1": ["00100","01100","00100","00100","00100","00100","01110"],
+              "2": ["01110","10001","00001","00010","00100","01000","11111"],
+              "3": ["11110","00001","00001","01110","00001","00001","11110"],
+              "4": ["00010","00110","01010","10010","11111","00010","00010"],
+              "5": ["11111","10000","10000","11110","00001","00001","11110"],
+              "6": ["01110","10000","10000","11110","10001","10001","01110"],
+              "7": ["11111","00001","00010","00100","01000","01000","01000"],
+              "8": ["01110","10001","10001","01110","10001","10001","01110"],
+              "9": ["01110","10001","10001","01111","00001","00001","01110"],
+          }
+
+          glyph = FONT.get(letter, FONT["A"])
+
+          # ---------------------------------------------------------
+          # GENERATION PNG RGBA
+          # ---------------------------------------------------------
+
+          def png_chunk(kind, data):
               return (
                   struct.pack(">I", len(data))
-                  + chunk_type
+                  + kind
                   + data
                   + struct.pack(
                       ">I",
-                      zlib.crc32(chunk_type + data) & 0xffffffff
+                      zlib.crc32(kind + data) & 0xffffffff
                   )
               )
 
-          raw = bytearray()
+          def build_png(size, adaptive=False):
+              pixels = bytearray()
 
-          for y in range(size):
-              raw.append(0)
+              if adaptive:
+                  scale = max(1, int(size / 16))
+              else:
+                  scale = max(1, int(size / 16))
 
-              for x in range(size):
-                  dx = x - size / 2
-                  dy = y - size / 2
-                  distance = (dx * dx + dy * dy) ** 0.5
+              glyph_width = 5 * scale
+              glyph_height = 7 * scale
 
-                  if distance <= size * 0.43:
-                      raw.extend([r, g, b, 255])
-                  else:
-                      raw.extend([0, 0, 0, 0])
+              offset_x = (size - glyph_width) // 2
+              offset_y = (size - glyph_height) // 2
 
-          png = b"\x89PNG\r\n\x1a\n"
+              for y in range(size):
+                  pixels.append(0)
 
-          png += chunk(
-              b"IHDR",
-              struct.pack(
-                  ">IIBBBBB",
-                  size,
-                  size,
-                  8,
-                  6,
-                  0,
-                  0,
-                  0
+                  for x in range(size):
+                      if adaptive:
+                          pr, pg, pb, pa = 0, 0, 0, 0
+                      else:
+                          pr, pg, pb, pa = r, g, b, 255
+
+                      gx = x - offset_x
+                      gy = y - offset_y
+
+                      if (
+                          0 <= gx < glyph_width
+                          and 0 <= gy < glyph_height
+                      ):
+                          cell_x = gx // scale
+                          cell_y = gy // scale
+
+                          if glyph[cell_y][cell_x] == "1":
+                              pr, pg, pb, pa = 255, 255, 255, 255
+
+                      pixels.extend([pr, pg, pb, pa])
+
+              png = b"\x89PNG\r\n\x1a\n"
+
+              png += png_chunk(
+                  b"IHDR",
+                  struct.pack(
+                      ">IIBBBBB",
+                      size,
+                      size,
+                      8,
+                      6,
+                      0,
+                      0,
+                      0
+                  )
               )
-          )
 
-          png += chunk(
-              b"IDAT",
-              zlib.compress(bytes(raw), 9)
-          )
+              png += png_chunk(
+                  b"IDAT",
+                  zlib.compress(bytes(pixels), 9)
+              )
 
-          png += chunk(b"IEND", b"")
+              png += png_chunk(b"IEND", b"")
+
+              return png
 
           base = Path("android/app/src/main/res")
+
+          # ---------------------------------------------------------
+          # MIPMAPS CLASSIQUES
+          # ---------------------------------------------------------
 
           densities = {
               "mipmap-mdpi": 48,
@@ -477,66 +583,111 @@ jobs:
           for folder, target_size in densities.items():
               directory = base / folder
               directory.mkdir(parents=True, exist_ok=True)
-              (directory / "ic_launcher.png").write_bytes(png)
+
+              (directory / "ic_launcher.png").write_bytes(
+                  build_png(target_size, adaptive=False)
+              )
+
+              (directory / "ic_launcher_round.png").write_bytes(
+                  build_png(target_size, adaptive=False)
+              )
+
+          # ---------------------------------------------------------
+          # ICONE ADAPTATIVE ANDROID 8+
+          # ---------------------------------------------------------
 
           anydpi = base / "mipmap-anydpi-v26"
           anydpi.mkdir(parents=True, exist_ok=True)
 
-          (anydpi / "ic_launcher.xml").write_text(
-              """<?xml version="1.0" encoding="utf-8"?>
+          adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
               <background android:drawable="@color/ic_launcher_background"/>
               <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+              <monochrome android:drawable="@drawable/ic_launcher_foreground"/>
           </adaptive-icon>
-          """,
+          """
+
+          (anydpi / "ic_launcher.xml").write_text(
+              adaptive_xml,
+              encoding="utf-8"
+          )
+
+          (anydpi / "ic_launcher_round.xml").write_text(
+              adaptive_xml,
               encoding="utf-8"
           )
 
           drawable = base / "drawable"
           drawable.mkdir(parents=True, exist_ok=True)
 
-          (drawable / "ic_launcher_foreground.png").write_bytes(png)
+          (drawable / "ic_launcher_foreground.png").write_bytes(
+              build_png(108, adaptive=True)
+          )
+
+          # ---------------------------------------------------------
+          # COULEUR D'ARRIERE-PLAN
+          # ---------------------------------------------------------
 
           values = base / "values"
           values.mkdir(parents=True, exist_ok=True)
 
-          # Supprimer l'ancien fichier s'il existe afin d'eviter
-          # un doublon avec la ressource generee dans colors.xml.
           legacy_background = values / "ic_launcher_background.xml"
 
           if legacy_background.exists():
               legacy_background.unlink()
               print(
-                  "Ancien fichier ic_launcher_background.xml supprime "
-                  "pour eviter un doublon."
+                  "Ancien fichier ic_launcher_background.xml supprime."
               )
 
           values_file = values / "colors.xml"
 
           existing = ""
+
           if values_file.exists():
               existing = values_file.read_text(encoding="utf-8")
 
-          if "ic_launcher_background" not in existing:
-              content = existing.rstrip()
+          lines = existing.splitlines()
 
-              if not content:
-                  content = (
-                      '<?xml version="1.0" encoding="utf-8"?>\n'
-                      '<resources>\n'
-                      '</resources>'
-                  )
+          filtered = [
+              line
+              for line in lines
+              if 'name="ic_launcher_background"' not in line
+          ]
 
-              content = content.replace(
+          if not filtered:
+              filtered = [
+                  '<?xml version="1.0" encoding="utf-8"?>',
+                  "<resources>",
                   "</resources>",
-                  f'    <color name="ic_launcher_background">#{r:02X}{g:02X}{b:02X}</color>\n'
-                  "</resources>"
-              )
+              ]
 
-              values_file.write_text(content, encoding="utf-8")
+          while filtered and filtered[-1].strip() == "":
+              filtered.pop()
 
-          print(f"Icone generee pour : {app_name}")
-          print(f"Couleur : #{r:02X}{g:02X}{b:02X}")
+          if filtered[-1].strip() != "</resources>":
+              filtered.append("</resources>")
+
+          content = "\n".join(filtered)
+
+          content = content.replace(
+              "</resources>",
+              f'    <color name="ic_launcher_background">#{r:02X}{g:02X}{b:02X}</color>\n'
+              "</resources>"
+          )
+
+          values_file.write_text(
+              content,
+              encoding="utf-8"
+          )
+
+          print("==========================================")
+          print("ICONE PERSONNALISEE GENEREE")
+          print("==========================================")
+          print(f"Application : {app_name}")
+          print(f"Lettre      : {letter}")
+          print(f"Couleur     : #{r:02X}{g:02X}{b:02X}")
+          print("Mode        : adaptatif + monochrome + legacy")
+          print("==========================================")
           PY
 
       - name: Configurer le nom de l'application
@@ -600,13 +751,13 @@ jobs:
           if 'android:roundIcon=' in text:
               text = re.sub(
                   r'android:roundIcon="[^"]+"',
-                  'android:roundIcon="@mipmap/ic_launcher"',
+                  'android:roundIcon="@mipmap/ic_launcher_round"',
                   text
               )
           else:
               text = text.replace(
-                  '<application ',
-                  '<application android:roundIcon="@mipmap/ic_launcher" ',
+                  "<application",
+                  '<application android:roundIcon="@mipmap/ic_launcher_round"',
                   1
               )
 
@@ -639,7 +790,9 @@ jobs:
 
           echo ""
           echo "Gradle :"
-          grep -n "applicationId" android/app/build.gradle android/app/build.gradle.kts 2>/dev/null || true
+          grep -n "applicationId" \
+            android/app/build.gradle \
+            android/app/build.gradle.kts 2>/dev/null || true
 
           echo ""
           echo "Icones :"
@@ -650,7 +803,9 @@ jobs:
 
           echo ""
           echo "Ressource couleur launcher :"
-          grep -R -n "ic_launcher_background" android/app/src/main/res/values || true
+          grep -R -n \
+            "ic_launcher_background" \
+            android/app/src/main/res/values || true
 
           echo ""
           echo "Capacitor config :"
@@ -662,17 +817,36 @@ jobs:
 
           echo ""
           echo "Verification absence URL SimiRork :"
-          if grep -n "https://simirork.vercel.app" \
+
+          if grep -n \
+            "https://simirork.vercel.app" \
             android/app/src/main/assets/capacitor.config.json; then
-            echo "ERREUR : l'URL SimiRork est toujours presente dans la configuration APK."
+
+            echo "ERREUR : l'URL SimiRork est toujours presente."
             exit 1
           fi
 
           echo "URL SimiRork absente de la configuration APK."
 
           echo ""
+          echo "Verification applicationId :"
+
+          if ! grep -R -n \
+            "$APPLICATION_ID" \
+            android/app/build.gradle \
+            android/app/build.gradle.kts \
+            android/app/src/main/AndroidManifest.xml 2>/dev/null; then
+
+            echo "ERREUR : Application ID non trouve dans la configuration Android."
+            exit 1
+          fi
+
+          echo "Application ID verifie."
+
+          echo ""
           echo "Capacitor Cordova :"
-          ls -lh android/capacitor-cordova-android-plugins/cordova.variables.gradle
+          ls -lh \
+            android/capacitor-cordova-android-plugins/cordova.variables.gradle
 
           echo ""
           echo "=========================================="
