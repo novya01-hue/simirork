@@ -180,18 +180,15 @@ jobs:
 
           SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
 
-          # Chaque segment doit commencer par une lettre.
-          # Cela garantit un applicationId Android valide meme si
-          # le nom de l'application commence par un chiffre.
+          # Un segment Android ne doit pas commencer par un chiffre.
           if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
             SAFE_NAME="app_${SAFE_NAME}"
           fi
 
-          # Le prefixe "h" garantit que le segment du hash commence
-          # toujours par une lettre.
+          # Le prefixe h garantit que le segment hash commence par une lettre.
           APPLICATION_ID="com.yoski.app.${SAFE_NAME}.h${HASH:0:8}"
 
-          # Verification stricte de l'applicationId Android.
+          # Verification stricte de l'applicationId.
           if [[ ! "$APPLICATION_ID" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
             echo "ERREUR : Application ID Android invalide : $APPLICATION_ID"
             exit 1
@@ -262,14 +259,17 @@ jobs:
           if manifest.exists():
               text = manifest.read_text(encoding="utf-8")
 
-              text = text.replace(
-                  'package="com.yoski.simirork"',
-                  f'package="{application_id}"'
+              text = re.sub(
+                  r'package="[^"]+"',
+                  f'package="{application_id}"',
+                  text,
+                  count=1
               )
 
-              text = text.replace(
-                  'android:label="SimiRork"',
-                  'android:label="@string/app_name"'
+              text = re.sub(
+                  r'android:label="SimiRork"',
+                  'android:label="@string/app_name"',
+                  text
               )
 
               manifest.write_text(text, encoding="utf-8")
@@ -408,10 +408,6 @@ jobs:
           app_name = os.environ["APP_NAME"]
           hash_value = os.environ["HASH"]
 
-          # ---------------------------------------------------------
-          # IDENTITE DETERMINISTE
-          # ---------------------------------------------------------
-
           digest = hashlib.sha256(
               f"{app_name}|{hash_value}".encode("utf-8")
           ).digest()
@@ -431,8 +427,7 @@ jobs:
               (91, 61, 43),
           ]
 
-          background = palette[digest[0] % len(palette)]
-          r, g, b = background
+          r, g, b = palette[digest[0] % len(palette)]
 
           letter = next(
               (
@@ -442,10 +437,6 @@ jobs:
               ),
               "A"
           )
-
-          # ---------------------------------------------------------
-          # POLICE 5x7 SANS DEPENDANCE EXTERNE
-          # ---------------------------------------------------------
 
           FONT = {
               "A": ["01110","10001","10001","11111","10001","10001","10001"],
@@ -488,10 +479,6 @@ jobs:
 
           glyph = FONT.get(letter, FONT["A"])
 
-          # ---------------------------------------------------------
-          # GENERATION PNG RGBA
-          # ---------------------------------------------------------
-
           def png_chunk(kind, data):
               return (
                   struct.pack(">I", len(data))
@@ -506,10 +493,7 @@ jobs:
           def build_png(size, adaptive=False):
               pixels = bytearray()
 
-              if adaptive:
-                  scale = max(1, int(size / 16))
-              else:
-                  scale = max(1, int(size / 16))
+              scale = max(1, int(size / 16))
 
               glyph_width = 5 * scale
               glyph_height = 7 * scale
@@ -521,6 +505,7 @@ jobs:
                   pixels.append(0)
 
                   for x in range(size):
+
                       if adaptive:
                           pr, pg, pb, pa = 0, 0, 0, 0
                       else:
@@ -568,10 +553,6 @@ jobs:
 
           base = Path("android/app/src/main/res")
 
-          # ---------------------------------------------------------
-          # MIPMAPS CLASSIQUES
-          # ---------------------------------------------------------
-
           densities = {
               "mipmap-mdpi": 48,
               "mipmap-hdpi": 72,
@@ -591,10 +572,6 @@ jobs:
               (directory / "ic_launcher_round.png").write_bytes(
                   build_png(target_size, adaptive=False)
               )
-
-          # ---------------------------------------------------------
-          # ICONE ADAPTATIVE ANDROID 8+
-          # ---------------------------------------------------------
 
           anydpi = base / "mipmap-anydpi-v26"
           anydpi.mkdir(parents=True, exist_ok=True)
@@ -623,10 +600,6 @@ jobs:
           (drawable / "ic_launcher_foreground.png").write_bytes(
               build_png(108, adaptive=True)
           )
-
-          # ---------------------------------------------------------
-          # COULEUR D'ARRIERE-PLAN
-          # ---------------------------------------------------------
 
           values = base / "values"
           values.mkdir(parents=True, exist_ok=True)
@@ -785,17 +758,29 @@ jobs:
 
           echo ""
           echo "Manifest :"
-          grep -n "manifest" android/app/src/main/AndroidManifest.xml || true
-          grep -n "application" android/app/src/main/AndroidManifest.xml || true
+
+          grep -n "manifest" \
+            android/app/src/main/AndroidManifest.xml || true
+
+          grep -n "application" \
+            android/app/src/main/AndroidManifest.xml || true
 
           echo ""
           echo "Gradle :"
-          grep -n "applicationId" \
-            android/app/build.gradle \
-            android/app/build.gradle.kts 2>/dev/null || true
+
+          if [ -f "android/app/build.gradle" ]; then
+            grep -n "applicationId" \
+              android/app/build.gradle || true
+          fi
+
+          if [ -f "android/app/build.gradle.kts" ]; then
+            grep -n "applicationId" \
+              android/app/build.gradle.kts || true
+          fi
 
           echo ""
           echo "Icones :"
+
           find android/app/src/main/res \
             \( -name "ic_launcher*" -o -name "*launcher*" \) \
             -type f \
@@ -803,17 +788,32 @@ jobs:
 
           echo ""
           echo "Ressource couleur launcher :"
+
           grep -R -n \
             "ic_launcher_background" \
-            android/app/src/main/res/values || true
+            android/app/src/main/res/values \
+            2>/dev/null || true
 
           echo ""
           echo "Capacitor config :"
+
+          if [ ! -f "android/app/src/main/assets/capacitor.config.json" ]; then
+            echo "ERREUR : capacitor.config.json absent."
+            exit 1
+          fi
+
           cat android/app/src/main/assets/capacitor.config.json
 
           echo ""
           echo "HTML embarque :"
-          ls -lh android/app/src/main/assets/public/index.html
+
+          if [ ! -f "android/app/src/main/assets/public/index.html" ]; then
+            echo "ERREUR : index.html embarque absent."
+            exit 1
+          fi
+
+          ls -lh \
+            android/app/src/main/assets/public/index.html
 
           echo ""
           echo "Verification absence URL SimiRork :"
@@ -831,24 +831,71 @@ jobs:
           echo ""
           echo "Verification applicationId :"
 
-          if ! grep -R -n \
-            "$APPLICATION_ID" \
-            android/app/build.gradle \
-            android/app/build.gradle.kts \
-            android/app/src/main/AndroidManifest.xml 2>/dev/null; then
+          APPLICATION_ID_FOUND=false
 
-            echo "ERREUR : Application ID non trouve dans la configuration Android."
+          if [ -f "android/app/build.gradle" ]; then
+            if grep -F -q \
+              "$APPLICATION_ID" \
+              android/app/build.gradle; then
+
+              APPLICATION_ID_FOUND=true
+              echo "Application ID trouvee dans build.gradle."
+            fi
+          fi
+
+          if [ -f "android/app/build.gradle.kts" ]; then
+            if grep -F -q \
+              "$APPLICATION_ID" \
+              android/app/build.gradle.kts; then
+
+              APPLICATION_ID_FOUND=true
+              echo "Application ID trouvee dans build.gradle.kts."
+            fi
+          fi
+
+          if [ "$APPLICATION_ID_FOUND" != "true" ]; then
+            echo "ERREUR : Application ID non trouvee dans la configuration Android."
             exit 1
           fi
 
-          echo "Application ID verifie."
+          echo "Application ID verifiee."
 
           echo ""
-          echo "Capacitor Cordova :"
+          echo "Verification de l'icone adaptive :"
+
+          if [ ! -f "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" ]; then
+            echo "ERREUR : ic_launcher.xml absent."
+            exit 1
+          fi
+
+          if [ ! -f "android/app/src/main/res/drawable/ic_launcher_foreground.png" ]; then
+            echo "ERREUR : ic_launcher_foreground.png absent."
+            exit 1
+          fi
+
+          if [ ! -f "android/app/src/main/res/values/colors.xml" ]; then
+            echo "ERREUR : colors.xml absent."
+            exit 1
+          fi
+
+          echo "Icone adaptive presente."
+
+          echo ""
+          echo "Verification du dossier Cordova :"
+
+          if [ ! -f \
+            "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
+
+            echo "ERREUR : cordova.variables.gradle absent."
+            exit 1
+          fi
+
           ls -lh \
             android/capacitor-cordova-android-plugins/cordova.variables.gradle
 
           echo ""
+          echo "=========================================="
+          echo "CONFIGURATION FINALE VALIDE"
           echo "=========================================="
 
       - name: Construire l'APK
