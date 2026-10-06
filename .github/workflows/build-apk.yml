@@ -178,7 +178,6 @@ jobs:
 
           SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
 
-          # Un nom de fichier Android ne doit pas commencer par un chiffre.
           if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
             SAFE_NAME="app_${SAFE_NAME}"
           fi
@@ -186,7 +185,6 @@ jobs:
           # Package Android unique et stable par projet.
           APPLICATION_ID="com.yoski.app.p${HASH}"
 
-          # Verification stricte de l'applicationId.
           if [[ ! "$APPLICATION_ID" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
             echo "ERREUR : Application ID Android invalide : $APPLICATION_ID"
             exit 1
@@ -204,6 +202,8 @@ jobs:
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
           echo "safe_name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "application_id=$APPLICATION_ID"
+
           echo "application_id=$APPLICATION_ID" >> "$GITHUB_OUTPUT"
 
       - name: Verifier le projet Android
@@ -963,16 +963,18 @@ jobs:
             echo "ERREUR : outil aapt introuvable."
             echo ""
             echo "Build-tools disponibles :"
+
             find "$ANDROID_HOME/build-tools" \
               -maxdepth 2 \
               -type f \
               -name "aapt" \
               -print 2>/dev/null || true
+
             exit 1
           fi
 
-          chmod +x "$AAPT"
-
+          # NE PAS utiliser chmod ici.
+          # Les outils Android GitHub Actions sont deja executables.
           echo "aapt : $AAPT"
 
           echo ""
