@@ -33,11 +33,9 @@ jobs:
         shell: bash
         run: |
           set -e
-
           echo "=========================================="
           echo "INSTALLATION DES DEPENDANCES NPM"
           echo "=========================================="
-
           npm ci
 
       - name: Installer les outils Android
@@ -51,7 +49,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           echo "=========================================="
           echo "VERIFICATION DES OUTILS"
           echo "=========================================="
@@ -85,7 +82,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           echo "=========================================="
           echo "SYNCHRONISATION CAPACITOR ANDROID"
           echo "=========================================="
@@ -112,7 +108,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           echo "=========================================="
           echo "RECUPERATION DU HTML"
           echo "=========================================="
@@ -165,7 +160,10 @@ jobs:
           echo "GENERATION DE L'IDENTITE DETERMINISTE"
           echo "=========================================="
 
-          HASH=$(printf '%s' "${PROJECT_ID}|${APP_NAME}" | sha256sum | cut -c1-16)
+          # L'identite Android depend uniquement du projectId.
+          # Ainsi, un meme projet conserve toujours le meme package Android,
+          # meme si son nom est modifie.
+          HASH=$(printf '%s' "$PROJECT_ID" | sha256sum | cut -c1-16)
 
           SAFE_NAME=$(printf '%s' "$APP_NAME" \
             | tr '[:upper:]' '[:lower:]' \
@@ -180,13 +178,13 @@ jobs:
 
           SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
 
-          # Un segment Android ne doit pas commencer par un chiffre.
+          # Un nom de fichier Android ne doit pas commencer par un chiffre.
           if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
             SAFE_NAME="app_${SAFE_NAME}"
           fi
 
-          # Le prefixe h garantit que le segment hash commence par une lettre.
-          APPLICATION_ID="com.yoski.app.${SAFE_NAME}.h${HASH:0:8}"
+          # Package Android unique et stable par projet.
+          APPLICATION_ID="com.yoski.app.p${HASH}"
 
           # Verification stricte de l'applicationId.
           if [[ ! "$APPLICATION_ID" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
@@ -321,10 +319,12 @@ jobs:
             echo "ERREUR : capacitor.config.json absent."
             echo ""
             echo "Contenu des assets Android :"
+
             find android/app/src/main/assets \
               -maxdepth 2 \
               -type f \
               -print 2>/dev/null || true
+
             exit 1
           fi
 
@@ -759,23 +759,18 @@ jobs:
           echo ""
           echo "Manifest :"
 
-          grep -n "manifest" \
-            android/app/src/main/AndroidManifest.xml || true
-
-          grep -n "application" \
-            android/app/src/main/AndroidManifest.xml || true
+          grep -n "manifest" android/app/src/main/AndroidManifest.xml || true
+          grep -n "application" android/app/src/main/AndroidManifest.xml || true
 
           echo ""
           echo "Gradle :"
 
           if [ -f "android/app/build.gradle" ]; then
-            grep -n "applicationId" \
-              android/app/build.gradle || true
+            grep -n "applicationId" android/app/build.gradle || true
           fi
 
           if [ -f "android/app/build.gradle.kts" ]; then
-            grep -n "applicationId" \
-              android/app/build.gradle.kts || true
+            grep -n "applicationId" android/app/build.gradle.kts || true
           fi
 
           echo ""
@@ -812,14 +807,12 @@ jobs:
             exit 1
           fi
 
-          ls -lh \
-            android/app/src/main/assets/public/index.html
+          ls -lh android/app/src/main/assets/public/index.html
 
           echo ""
           echo "Verification absence URL SimiRork :"
 
-          if grep -n \
-            "https://simirork.vercel.app" \
+          if grep -n "https://simirork.vercel.app" \
             android/app/src/main/assets/capacitor.config.json; then
 
             echo "ERREUR : l'URL SimiRork est toujours presente."
@@ -834,20 +827,14 @@ jobs:
           APPLICATION_ID_FOUND=false
 
           if [ -f "android/app/build.gradle" ]; then
-            if grep -F -q \
-              "$APPLICATION_ID" \
-              android/app/build.gradle; then
-
+            if grep -F -q "$APPLICATION_ID" android/app/build.gradle; then
               APPLICATION_ID_FOUND=true
               echo "Application ID trouvee dans build.gradle."
             fi
           fi
 
           if [ -f "android/app/build.gradle.kts" ]; then
-            if grep -F -q \
-              "$APPLICATION_ID" \
-              android/app/build.gradle.kts; then
-
+            if grep -F -q "$APPLICATION_ID" android/app/build.gradle.kts; then
               APPLICATION_ID_FOUND=true
               echo "Application ID trouvee dans build.gradle.kts."
             fi
@@ -883,15 +870,12 @@ jobs:
           echo ""
           echo "Verification du dossier Cordova :"
 
-          if [ ! -f \
-            "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-
+          if [ ! -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
             echo "ERREUR : cordova.variables.gradle absent."
             exit 1
           fi
 
-          ls -lh \
-            android/capacitor-cordova-android-plugins/cordova.variables.gradle
+          ls -lh android/capacitor-cordova-android-plugins/cordova.variables.gradle
 
           echo ""
           echo "=========================================="
@@ -927,10 +911,11 @@ jobs:
             -maxdepth 1 \
             -type f \
             -name "*.apk" \
+            ! -name "${SAFE_NAME}.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "ERREUR : aucun APK trouve."
+            echo "ERREUR : aucun APK source trouve."
             exit 1
           fi
 
@@ -942,7 +927,95 @@ jobs:
           echo "APK source : $APK"
           echo "APK final  : $FINAL_APK"
 
+      - name: Verifier l'identite reelle de l'APK
+        env:
+          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
+          SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
+        shell: bash
+        run: |
+          set -e
+
+          echo "=========================================="
+          echo "VERIFICATION DE L'IDENTITE REELLE APK"
+          echo "=========================================="
+
+          APK="android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERREUR : APK final introuvable."
+            echo "APK attendu : $APK"
+            exit 1
+          fi
+
+          echo "APK : $APK"
+          echo "Application ID attendu : $APPLICATION_ID"
+
+          echo ""
+          echo "Recherche de aapt..."
+
+          AAPT=$(find "$ANDROID_HOME/build-tools" \
+            -type f \
+            -name "aapt" \
+            | sort -V \
+            | tail -n 1)
+
+          if [ -z "$AAPT" ]; then
+            echo "ERREUR : outil aapt introuvable."
+            echo ""
+            echo "Build-tools disponibles :"
+            find "$ANDROID_HOME/build-tools" \
+              -maxdepth 2 \
+              -type f \
+              -name "aapt" \
+              -print 2>/dev/null || true
+            exit 1
+          fi
+
+          chmod +x "$AAPT"
+
+          echo "aapt : $AAPT"
+
+          echo ""
+          echo "Lecture du package Android reel..."
+
+          PACKAGE_NAME=$(
+            "$AAPT" dump badging "$APK" \
+              | sed -n "s/^package: name='\([^']*\)'.*/\1/p" \
+              | head -n 1
+          )
+
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "ERREUR : impossible de lire le package Android de l'APK."
+            exit 1
+          fi
+
+          echo "Package reel APK : $PACKAGE_NAME"
+          echo "Package attendu  : $APPLICATION_ID"
+
+          echo ""
+
+          if [ "$PACKAGE_NAME" != "$APPLICATION_ID" ]; then
+            echo "=========================================="
+            echo "ERREUR CRITIQUE : PACKAGE ANDROID INCORRECT"
+            echo "=========================================="
+            echo "Attendu : $APPLICATION_ID"
+            echo "Reel    : $PACKAGE_NAME"
+            echo ""
+            echo "L'APK ne pourra pas etre considere comme une"
+            echo "application Android distincte."
+            exit 1
+          fi
+
+          echo "=========================================="
+          echo "PACKAGE ANDROID VALIDE"
+          echo "=========================================="
+          echo "L'APK possede bien l'identite :"
+          echo "$APPLICATION_ID"
+          echo "=========================================="
+
       - name: Verifier l'APK
+        env:
+          SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
         shell: bash
         run: |
           set -e
@@ -951,14 +1024,9 @@ jobs:
           echo "VERIFICATION APK"
           echo "=========================================="
 
-          APK=$(find android/app/build/outputs/apk/debug \
-            -maxdepth 1 \
-            -type f \
-            -name "*.apk" \
-            | sort \
-            | tail -n 1)
+          APK="android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
 
-          if [ -z "$APK" ]; then
+          if [ ! -f "$APK" ]; then
             echo "ERREUR : APK introuvable."
             exit 1
           fi
@@ -978,6 +1046,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ steps.identity.outputs.safe_name }}
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/debug/${{ steps.identity.outputs.safe_name }}.apk
           if-no-files-found: error
           retention-days: 7
