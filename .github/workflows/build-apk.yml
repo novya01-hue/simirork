@@ -407,6 +407,53 @@ jobs:
             ls -lh "$RES/mipmap-${density}/ic_launcher.png"
           done
 
+      - name: Générer l'écran de démarrage Android
+        run: |
+          set -euo pipefail
+
+          RES="android/app/src/main/res"
+          ICON_SOURCE="generated-app-icon.png"
+          SPLASH_FILE="$RES/drawable/splash.png"
+
+          test -s "$ICON_SOURCE" || {
+            echo "ERREUR : l'icône source est absente pour le splash."
+            exit 1
+          }
+
+          echo "Suppression des anciens splash SimiRork..."
+
+          find "$RES" -type f \( \
+            -iname 'splash.png' -o \
+            -iname 'splash.jpg' -o \
+            -iname 'splash.jpeg' -o \
+            -iname 'splash.webp' \
+          \) -delete
+
+          rm -f "$RES/drawable/splash.xml"
+
+          mkdir -p "$RES/drawable"
+
+          echo "Création du splash personnalisé..."
+
+          convert "$ICON_SOURCE" \
+            -resize '420x420' \
+            -background white \
+            -gravity center \
+            -extent 1024x1024 \
+            -strip \
+            PNG32:"$SPLASH_FILE"
+
+          test -s "$SPLASH_FILE" || {
+            echo "ERREUR : le splash personnalisé n'a pas été créé."
+            exit 1
+          }
+
+          echo "Splash personnalisé créé : $SPLASH_FILE"
+          ls -lh "$SPLASH_FILE"
+
+          echo "Références splash présentes dans les styles Android :"
+          grep -Rni "splash" "$RES"/values*/*.xml 2>/dev/null || true
+
       - name: Vérifier la configuration finale
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
@@ -459,6 +506,9 @@ jobs:
           test ! -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           test ! -f android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
 
+          test -s android/app/src/main/res/drawable/splash.png
+
+          echo "Splash          : logo sélectionné / icône de l'application"
           echo "Vérification OK."
 
       - name: Préparer Gradle
