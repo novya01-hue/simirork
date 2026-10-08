@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
 type ApkStatus =
   | 'none'
@@ -21,7 +21,167 @@ type SavedLogo = {
   mediaType?: string;
   model?: string;
   selectedAt?: string;
+  officialAt?: string;
+  sha256?: string;
+  logoVersionId?: string;
+  status?: 'selected' | 'official';
 };
+
+type ProjectLogoVersion = {
+  id: string;
+  projectId: string;
+  parentLogoId: string | null;
+  versionNumber: number;
+  status:
+    | 'generated'
+    | 'selected'
+    | 'edited'
+    | 'official'
+    | 'archived';
+  imageData: string;
+  imageMimeType: string | null;
+  imageWidth: number | null;
+  imageHeight: number | null;
+  fileSizeBytes: number | null;
+  sourceType:
+    | 'ai'
+    | 'manual_edit'
+    | 'ai_edit'
+    | 'imported';
+  model: string | null;
+  generationPrompt: string | null;
+  editPrompt: string | null;
+  editData: Record<string, unknown>;
+  sha256: string;
+  createdAt: string;
+  selectedAt: string | null;
+  officialAt: string | null;
+};
+
+
+type LogoEditorSettings = {
+  imageScale: number;
+  imageX: number;
+  imageY: number;
+  rotation: number;
+  hue: number;
+  saturation: number;
+  brightness: number;
+  backgroundColor: string;
+  text: string;
+  textColor: string;
+  textSize: number;
+  textX: number;
+  textY: number;
+};
+
+type LogoSelectionMode =
+  | 'smart'
+  | 'rect'
+  | 'all';
+
+type LogoSelectionBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+const LOGO_EDITOR_SIZE = 512;
+
+const DEFAULT_LOGO_EDITOR_SETTINGS: LogoEditorSettings = {
+  imageScale: 1,
+  imageX: 0,
+  imageY: 0,
+  rotation: 0,
+  hue: 0,
+  saturation: 100,
+  brightness: 100,
+  backgroundColor: '#ffffff',
+  text: '',
+  textColor: '#000000',
+  textSize: 42,
+  textX: 0,
+  textY: 175,
+};
+
+function hexToRgb(
+  value: string
+): { r: number; g: number; b: number } | null {
+  const match = /^#([0-9a-f]{6})$/i.exec(value);
+
+  if (!match) {
+    return null;
+  }
+
+  const hex = match[1];
+
+  return {
+    r: Number.parseInt(hex.slice(0, 2), 16),
+    g: Number.parseInt(hex.slice(2, 4), 16),
+    b: Number.parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+function replaceCanvasBackground(
+  context: CanvasRenderingContext2D,
+  color: string
+) {
+  const target = hexToRgb(color);
+
+  if (!target) {
+    return;
+  }
+
+  const size = LOGO_EDITOR_SIZE;
+  const imageData = context.getImageData(0, 0, size, size);
+  const data = imageData.data;
+
+  const corners = [
+    0,
+    (size - 1) * 4,
+    ((size - 1) * size) * 4,
+    ((size * size) - 1) * 4,
+  ];
+
+  let seedR = 0;
+  let seedG = 0;
+  let seedB = 0;
+
+  for (const offset of corners) {
+    seedR += data[offset];
+    seedG += data[offset + 1];
+    seedB += data[offset + 2];
+  }
+
+  seedR /= corners.length;
+  seedG /= corners.length;
+  seedB /= corners.length;
+
+  const tolerance = 48;
+  const maxDistance = tolerance * tolerance * 3;
+
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = data[offset + 3];
+
+    if (alpha === 0) {
+      continue;
+    }
+
+    const dr = data[offset] - seedR;
+    const dg = data[offset + 1] - seedG;
+    const db = data[offset + 2] - seedB;
+    const distance = dr * dr + dg * dg + db * db;
+
+    if (distance <= maxDistance) {
+      data[offset] = target.r;
+      data[offset + 1] = target.g;
+      data[offset + 2] = target.b;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
 
 type Project = {
   id: string;
@@ -112,6 +272,23 @@ function parseSavedLogo(
       selectedAt:
         typeof parsed.selectedAt === 'string'
           ? parsed.selectedAt
+          : undefined,
+      officialAt:
+        typeof parsed.officialAt === 'string'
+          ? parsed.officialAt
+          : undefined,
+      sha256:
+        typeof parsed.sha256 === 'string'
+          ? parsed.sha256
+          : undefined,
+      logoVersionId:
+        typeof parsed.logoVersionId === 'string'
+          ? parsed.logoVersionId
+          : undefined,
+      status:
+        parsed.status === 'official' ||
+        parsed.status === 'selected'
+          ? parsed.status
           : undefined,
     };
   } catch {
@@ -409,6 +586,86 @@ export default function Home() {
 
   const [lastLogoCost, setLastLogoCost] =
     useState<number | null>(null);
+
+  const [logoVersions, setLogoVersions] =
+    useState<ProjectLogoVersion[]>([]);
+
+  const [selectedLogoVersion, setSelectedLogoVersion] =
+    useState<ProjectLogoVersion | null>(null);
+
+  const [officialLogoVersion, setOfficialLogoVersion] =
+    useState<ProjectLogoVersion | null>(null);
+
+  const [logoHistoryLoading, setLogoHistoryLoading] =
+    useState(false);
+
+  const [logoHistoryError, setLogoHistoryError] =
+    useState('');
+
+  const [showLogoHistory, setShowLogoHistory] =
+    useState(false);
+
+  const [officializingLogoId, setOfficializingLogoId] =
+    useState<string | null>(null);
+
+  const [logoEditorOpen, setLogoEditorOpen] =
+    useState(false);
+
+  const [logoEditorSource, setLogoEditorSource] =
+    useState('');
+
+  const [logoEditorParentId, setLogoEditorParentId] =
+    useState<string | null>(null);
+
+  const [logoEditorSettings, setLogoEditorSettings] =
+    useState<LogoEditorSettings>({
+      ...DEFAULT_LOGO_EDITOR_SETTINGS,
+    });
+
+  const [logoEditorSaving, setLogoEditorSaving] =
+    useState(false);
+
+  const [logoEditorError, setLogoEditorError] =
+    useState('');
+
+  const [logoSelectionMode, setLogoSelectionMode] =
+    useState<LogoSelectionMode>('smart');
+
+  const [logoSelectionTolerance, setLogoSelectionTolerance] =
+    useState(35);
+
+  const [logoSelectionActive, setLogoSelectionActive] =
+    useState(false);
+
+  const [logoSelectionImage, setLogoSelectionImage] =
+    useState('');
+
+  const [logoSelectionBase, setLogoSelectionBase] =
+    useState('');
+
+  const [logoSelectionSnapshot, setLogoSelectionSnapshot] =
+    useState('');
+
+  const [logoSelectionBounds, setLogoSelectionBounds] =
+    useState<LogoSelectionBounds | null>(null);
+
+  const [logoRectStart, setLogoRectStart] =
+    useState<{ x: number; y: number } | null>(null);
+
+  const [logoRectCurrent, setLogoRectCurrent] =
+    useState<{ x: number; y: number } | null>(null);
+
+  const logoSelectionDragRef =
+    useRef<{
+      pointerId: number;
+      startX: number;
+      startY: number;
+      startImageX: number;
+      startImageY: number;
+    } | null>(null);
+
+  const logoEditorCanvasRef =
+    useRef<HTMLCanvasElement | null>(null);
 
   const [modelVersion, setModelVersion] =
     useState(
@@ -1179,6 +1436,138 @@ export default function Home() {
     storageLoaded,
   ]);
 
+  const refreshLogoVersions =
+    async (
+      projectId: string
+    ): Promise<ProjectLogoVersion[] | null> => {
+      try {
+        setLogoHistoryLoading(true);
+        setLogoHistoryError('');
+
+        const response =
+          await fetch(
+            `/api/projects/${encodeURIComponent(
+              projectId
+            )}/logos`,
+            {
+              method: 'GET',
+              credentials: 'same-origin',
+              cache: 'no-store',
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !Array.isArray(data.logos)
+        ) {
+          throw new Error(
+            data?.error ||
+              "Impossible de récupérer l'historique des logos."
+          );
+        }
+
+        const versions: ProjectLogoVersion[] =
+          data.logos.map(
+            (logo: ProjectLogoVersion) => ({
+              ...logo,
+              id: String(logo.id),
+              projectId:
+                String(logo.projectId),
+              parentLogoId:
+                logo.parentLogoId
+                  ? String(
+                      logo.parentLogoId
+                    )
+                  : null,
+              versionNumber:
+                Number(
+                  logo.versionNumber
+                ) || 1,
+              imageData:
+                String(
+                  logo.imageData || ''
+                ),
+              sha256:
+                String(
+                  logo.sha256 || ''
+                ),
+            })
+          );
+
+        setLogoVersions(
+          versions
+        );
+
+        setSelectedLogoVersion(
+          data.selectedLogo
+            ? ({
+                ...data.selectedLogo,
+                id: String(
+                  data.selectedLogo.id
+                ),
+                projectId:
+                  String(
+                    data.selectedLogo
+                      .projectId
+                  ),
+                versionNumber:
+                  Number(
+                    data.selectedLogo
+                      .versionNumber
+                  ) || 1,
+              } as ProjectLogoVersion)
+            : null
+        );
+
+        setOfficialLogoVersion(
+          data.officialLogo
+            ? ({
+                ...data.officialLogo,
+                id: String(
+                  data.officialLogo.id
+                ),
+                projectId:
+                  String(
+                    data.officialLogo
+                      .projectId
+                  ),
+                versionNumber:
+                  Number(
+                    data.officialLogo
+                      .versionNumber
+                  ) || 1,
+              } as ProjectLogoVersion)
+            : null
+        );
+
+        return versions;
+      } catch (error) {
+        console.error(
+          'Erreur historique logos :',
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Impossible de récupérer l'historique des logos.";
+
+        setLogoHistoryError(
+          message
+        );
+
+        return null;
+      } finally {
+        setLogoHistoryLoading(
+          false
+        );
+      }
+    };
+
   const handleCreateProject =
     async () => {
       const name =
@@ -1249,6 +1638,11 @@ export default function Home() {
       setLogoProposals([]);
       setLogoError('');
       setLastLogoCost(null);
+      setLogoVersions([]);
+      setSelectedLogoVersion(null);
+      setOfficialLogoVersion(null);
+      setLogoHistoryError('');
+      setShowLogoHistory(false);
     };
 
   const handleOpenProject =
@@ -1337,6 +1731,12 @@ export default function Home() {
       setLogoProposals([]);
       setLogoError('');
       setLastLogoCost(null);
+      setLogoHistoryError('');
+      setShowLogoHistory(false);
+
+      await refreshLogoVersions(
+        normalizedProject.id
+      );
     };
 
   const handleBackToProjects =
@@ -1349,6 +1749,11 @@ export default function Home() {
       setLogoProposals([]);
       setLogoError('');
       setLastLogoCost(null);
+      setLogoVersions([]);
+      setSelectedLogoVersion(null);
+      setOfficialLogoVersion(null);
+      setLogoHistoryError('');
+      setShowLogoHistory(false);
       void fetchProjects();
     };
 
@@ -1399,6 +1804,11 @@ export default function Home() {
         setLogoProposals([]);
         setLogoError('');
         setLastLogoCost(null);
+        setLogoVersions([]);
+        setSelectedLogoVersion(null);
+        setOfficialLogoVersion(null);
+        setLogoHistoryError('');
+        setShowLogoHistory(false);
       }
     };
 
@@ -1670,6 +2080,9 @@ export default function Home() {
         return;
       }
 
+      const selectedAt =
+        new Date().toISOString();
+
       const savedLogo: SavedLogo = {
         id: proposal.id,
         image: proposal.image,
@@ -1677,8 +2090,9 @@ export default function Home() {
           proposal.mediaType,
         model:
           'bytedance-seed/seedream-4.5',
-        selectedAt:
-          new Date().toISOString(),
+        selectedAt,
+        status:
+          'selected',
       };
 
       const saved =
@@ -1705,9 +2119,1515 @@ export default function Home() {
         return;
       }
 
-      alert(
-        `Logo ${proposal.id} enregistré pour ${currentProject.name}.`
+      try {
+        const versionResponse =
+          await fetch(
+            `/api/projects/${encodeURIComponent(
+              currentProject.id
+            )}/logos`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body: JSON.stringify({
+                imageData:
+                  proposal.image,
+                status:
+                  'selected',
+                sourceType:
+                  'ai',
+                model:
+                  'bytedance-seed/seedream-4.5',
+                generationPrompt:
+                  currentProject.prompt ||
+                  null,
+                editData: {
+                  proposalId:
+                    proposal.id,
+                  selectedFrom:
+                    'logo_proposals',
+                },
+              }),
+            }
+          );
+
+        const versionData =
+          await versionResponse.json();
+
+        if (
+          !versionResponse.ok ||
+          !versionData.success
+        ) {
+          throw new Error(
+            versionData?.error ||
+              "Le logo a été sélectionné, mais sa version n'a pas pu être enregistrée."
+          );
+        }
+
+        await refreshLogoVersions(
+          currentProject.id
+        );
+
+        alert(
+          `Logo ${proposal.id} enregistré comme nouvelle version pour ${currentProject.name}.`
+        );
+      } catch (error) {
+        console.error(
+          'Erreur versionnement logo :',
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Impossible d'enregistrer la version du logo.";
+
+        setLogoHistoryError(
+          message
+        );
+
+        alert(
+          `Le logo est sélectionné, mais son historique n'a pas pu être mis à jour : ${message}`
+        );
+      }
+    };
+
+  useEffect(() => {
+    if (
+      !logoEditorOpen ||
+      !logoEditorSource
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadImage = (
+      source: string
+    ) =>
+      new Promise<HTMLImageElement>(
+        (resolve, reject) => {
+          const image = new Image();
+          image.onload = () =>
+            resolve(image);
+          image.onerror = () =>
+            reject(
+              new Error(
+                "Impossible de charger le logo dans l'éditeur."
+              )
+            );
+          image.src = source;
+        }
       );
+
+    const renderEditor =
+      async () => {
+        try {
+          const canvas =
+            logoEditorCanvasRef.current;
+
+          if (!canvas) {
+            return;
+          }
+
+          const context =
+            canvas.getContext('2d');
+
+          if (!context) {
+            return;
+          }
+
+          const {
+            imageScale,
+            imageX,
+            imageY,
+            rotation,
+            hue,
+            saturation,
+            brightness,
+            backgroundColor,
+            text,
+            textColor,
+            textSize,
+            textX,
+            textY,
+          } = logoEditorSettings;
+
+          canvas.width =
+            LOGO_EDITOR_SIZE;
+          canvas.height =
+            LOGO_EDITOR_SIZE;
+
+          context.clearRect(
+            0,
+            0,
+            LOGO_EDITOR_SIZE,
+            LOGO_EDITOR_SIZE
+          );
+
+          context.fillStyle =
+            backgroundColor;
+          context.fillRect(
+            0,
+            0,
+            LOGO_EDITOR_SIZE,
+            LOGO_EDITOR_SIZE
+          );
+
+          if (
+            logoSelectionActive &&
+            logoSelectionBase
+          ) {
+            const baseImage =
+              await loadImage(
+                logoSelectionBase
+              );
+
+            if (cancelled) {
+              return;
+            }
+
+            context.save();
+            context.filter = 'none';
+            context.drawImage(
+              baseImage,
+              0,
+              0,
+              LOGO_EDITOR_SIZE,
+              LOGO_EDITOR_SIZE
+            );
+            context.restore();
+
+            if (
+              logoSelectionImage &&
+              logoSelectionBounds
+            ) {
+              const selectedImage =
+                await loadImage(
+                  logoSelectionImage
+                );
+
+              if (cancelled) {
+                return;
+              }
+
+              const centerX =
+                logoSelectionBounds.x +
+                logoSelectionBounds.width / 2;
+              const centerY =
+                logoSelectionBounds.y +
+                logoSelectionBounds.height / 2;
+
+              context.save();
+              context.translate(
+                centerX + imageX,
+                centerY + imageY
+              );
+              context.rotate(
+                (rotation * Math.PI) /
+                  180
+              );
+              context.scale(
+                imageScale,
+                imageScale
+              );
+              context.filter =
+                `hue-rotate(${hue}deg) saturate(${saturation}%) brightness(${brightness}%)`;
+              context.drawImage(
+                selectedImage,
+                -centerX,
+                -centerY,
+                LOGO_EDITOR_SIZE,
+                LOGO_EDITOR_SIZE
+              );
+              context.restore();
+            }
+          } else {
+            const image =
+              await loadImage(
+                logoEditorSource
+              );
+
+            if (cancelled) {
+              return;
+            }
+
+            const fitScale =
+              Math.min(
+                LOGO_EDITOR_SIZE /
+                  image.naturalWidth,
+                LOGO_EDITOR_SIZE /
+                  image.naturalHeight
+              );
+
+            const width =
+              image.naturalWidth *
+              fitScale;
+
+            const height =
+              image.naturalHeight *
+              fitScale;
+
+            context.save();
+            context.translate(
+              LOGO_EDITOR_SIZE / 2 +
+                imageX,
+              LOGO_EDITOR_SIZE / 2 +
+                imageY
+            );
+            context.rotate(
+              (rotation * Math.PI) /
+                180
+            );
+            context.scale(
+              imageScale,
+              imageScale
+            );
+            context.filter =
+              `hue-rotate(${hue}deg) saturate(${saturation}%) brightness(${brightness}%)`;
+            context.drawImage(
+              image,
+              -width / 2,
+              -height / 2,
+              width,
+              height
+            );
+            context.restore();
+          }
+
+          replaceCanvasBackground(
+            context,
+            backgroundColor
+          );
+
+          if (text.trim()) {
+            context.save();
+            context.filter = 'none';
+            context.textAlign =
+              'center';
+            context.textBaseline =
+              'middle';
+            context.font =
+              `700 ${textSize}px Arial, sans-serif`;
+            context.fillStyle =
+              textColor;
+            context.shadowColor =
+              'rgba(0, 0, 0, 0.30)';
+            context.shadowBlur = 4;
+            context.shadowOffsetY = 2;
+            context.fillText(
+              text.trim(),
+              LOGO_EDITOR_SIZE / 2 +
+                textX,
+              LOGO_EDITOR_SIZE / 2 +
+                textY,
+              LOGO_EDITOR_SIZE - 32
+            );
+            context.restore();
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setLogoEditorError(
+              error instanceof Error
+                ? error.message
+                : "Impossible de charger le logo dans l'éditeur."
+            );
+          }
+        }
+      };
+
+    void renderEditor();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    logoEditorOpen,
+    logoEditorSource,
+    logoEditorSettings,
+    logoSelectionActive,
+    logoSelectionImage,
+    logoSelectionBase,
+    logoSelectionBounds,
+  ]);
+
+  const getLogoCanvasPoint = (
+    event:
+      | ReactPointerEvent<HTMLCanvasElement>
+      | PointerEvent
+  ) => {
+    const canvas =
+      logoEditorCanvasRef.current;
+
+    if (!canvas) {
+      return null;
+    }
+
+    const rect =
+      canvas.getBoundingClientRect();
+
+    const x =
+      Math.max(
+        0,
+        Math.min(
+          LOGO_EDITOR_SIZE - 1,
+          Math.round(
+            ((event.clientX - rect.left) /
+              rect.width) *
+              LOGO_EDITOR_SIZE
+          )
+        )
+      );
+
+    const y =
+      Math.max(
+        0,
+        Math.min(
+          LOGO_EDITOR_SIZE - 1,
+          Math.round(
+            ((event.clientY - rect.top) /
+              rect.height) *
+              LOGO_EDITOR_SIZE
+          )
+        )
+      );
+
+    return { x, y };
+  };
+
+  const createLogoSelection = (
+    mask: Uint8Array,
+    bounds: LogoSelectionBounds
+  ) => {
+    const canvas =
+      logoEditorCanvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const context =
+      canvas.getContext('2d');
+
+    if (!context) {
+      return;
+    }
+
+    const snapshot =
+      canvas.toDataURL('image/png');
+
+    const sourceData =
+      context.getImageData(
+        0,
+        0,
+        LOGO_EDITOR_SIZE,
+        LOGO_EDITOR_SIZE
+      );
+
+    const baseCanvas =
+      document.createElement(
+        'canvas'
+      );
+    const selectedCanvas =
+      document.createElement(
+        'canvas'
+      );
+
+    baseCanvas.width =
+      selectedCanvas.width =
+        LOGO_EDITOR_SIZE;
+    baseCanvas.height =
+      selectedCanvas.height =
+        LOGO_EDITOR_SIZE;
+
+    const baseContext =
+      baseCanvas.getContext('2d');
+    const selectedContext =
+      selectedCanvas.getContext('2d');
+
+    if (
+      !baseContext ||
+      !selectedContext
+    ) {
+      return;
+    }
+
+    const baseData =
+      new ImageData(
+        new Uint8ClampedArray(
+          sourceData.data
+        ),
+        LOGO_EDITOR_SIZE,
+        LOGO_EDITOR_SIZE
+      );
+
+    const selectedData =
+      selectedContext.createImageData(
+        LOGO_EDITOR_SIZE,
+        LOGO_EDITOR_SIZE
+      );
+
+    for (
+      let pixel = 0;
+      pixel < mask.length;
+      pixel++
+    ) {
+      if (!mask[pixel]) {
+        continue;
+      }
+
+      const offset = pixel * 4;
+      selectedData.data[offset] =
+        sourceData.data[offset];
+      selectedData.data[offset + 1] =
+        sourceData.data[offset + 1];
+      selectedData.data[offset + 2] =
+        sourceData.data[offset + 2];
+      selectedData.data[offset + 3] =
+        sourceData.data[offset + 3];
+
+      baseData.data[offset + 3] = 0;
+    }
+
+    baseContext.putImageData(
+      baseData,
+      0,
+      0
+    );
+    selectedContext.putImageData(
+      selectedData,
+      0,
+      0
+    );
+
+    setLogoSelectionSnapshot(
+      snapshot
+    );
+    setLogoSelectionBase(
+      baseCanvas.toDataURL(
+        'image/png'
+      )
+    );
+    setLogoSelectionImage(
+      selectedCanvas.toDataURL(
+        'image/png'
+      )
+    );
+    setLogoSelectionBounds(
+      bounds
+    );
+    setLogoSelectionActive(
+      true
+    );
+    setLogoEditorSettings(
+      (previous) => ({
+        ...previous,
+        imageScale: 1,
+        imageX: 0,
+        imageY: 0,
+        rotation: 0,
+        hue: 0,
+        saturation: 100,
+        brightness: 100,
+      })
+    );
+    setLogoEditorError('');
+  };
+
+  const handleSmartLogoSelection = (
+    point: { x: number; y: number }
+  ) => {
+    const canvas =
+      logoEditorCanvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const context =
+      canvas.getContext('2d');
+
+    if (!context) {
+      return;
+    }
+
+    const imageData =
+      context.getImageData(
+        0,
+        0,
+        LOGO_EDITOR_SIZE,
+        LOGO_EDITOR_SIZE
+      );
+
+    const totalPixels =
+      LOGO_EDITOR_SIZE *
+      LOGO_EDITOR_SIZE;
+    const mask =
+      new Uint8Array(
+        totalPixels
+      );
+    const visited =
+      new Uint8Array(
+        totalPixels
+      );
+
+    const seedIndex =
+      point.y *
+        LOGO_EDITOR_SIZE +
+      point.x;
+    const seedOffset =
+      seedIndex * 4;
+
+    const sr =
+      imageData.data[
+        seedOffset
+      ];
+    const sg =
+      imageData.data[
+        seedOffset + 1
+      ];
+    const sb =
+      imageData.data[
+        seedOffset + 2
+      ];
+    const sa =
+      imageData.data[
+        seedOffset + 3
+      ];
+
+    const threshold =
+      Math.max(
+        4,
+        logoSelectionTolerance *
+          4.5
+      );
+
+    const queue =
+      new Int32Array(
+        totalPixels
+      );
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = seedIndex;
+    visited[seedIndex] = 1;
+
+    let minX = point.x;
+    let maxX = point.x;
+    let minY = point.y;
+    let maxY = point.y;
+    let count = 0;
+
+    while (head < tail) {
+      const index =
+        queue[head++];
+      const x =
+        index %
+        LOGO_EDITOR_SIZE;
+      const y =
+        Math.floor(
+          index /
+            LOGO_EDITOR_SIZE
+        );
+      const offset =
+        index * 4;
+
+      const dr =
+        imageData.data[offset] -
+        sr;
+      const dg =
+        imageData.data[
+          offset + 1
+        ] - sg;
+      const db =
+        imageData.data[
+          offset + 2
+        ] - sb;
+      const da =
+        imageData.data[
+          offset + 3
+        ] - sa;
+
+      const distance =
+        Math.sqrt(
+          dr * dr +
+            dg * dg +
+            db * db +
+            0.25 * da * da
+        );
+
+      if (distance > threshold) {
+        continue;
+      }
+
+      mask[index] = 1;
+      count++;
+      minX = Math.min(
+        minX,
+        x
+      );
+      maxX = Math.max(
+        maxX,
+        x
+      );
+      minY = Math.min(
+        minY,
+        y
+      );
+      maxY = Math.max(
+        maxY,
+        y
+      );
+
+      const neighbors = [
+        index - 1,
+        index + 1,
+        index - LOGO_EDITOR_SIZE,
+        index + LOGO_EDITOR_SIZE,
+      ];
+
+      for (
+        const next of neighbors
+      ) {
+        if (
+          next < 0 ||
+          next >= totalPixels ||
+          visited[next]
+        ) {
+          continue;
+        }
+
+        const nx =
+          next %
+          LOGO_EDITOR_SIZE;
+        const ny =
+          Math.floor(
+            next /
+              LOGO_EDITOR_SIZE
+          );
+
+        if (
+          Math.abs(nx - x) +
+            Math.abs(ny - y) !==
+          1
+        ) {
+          continue;
+        }
+
+        visited[next] = 1;
+        queue[tail++] = next;
+      }
+    }
+
+    // Si la sélection connectée est trop petite (cas fréquent sur les
+    // traits fins, dégradés ou pixels anti-crénelés), on élargit la
+    // recherche autour du point cliqué sans sélectionner tout le fond.
+    if (count < 12) {
+      const radius = 18;
+      const localThreshold = Math.max(
+        threshold * 1.35,
+        28
+      );
+
+      for (
+        let y = Math.max(0, point.y - radius);
+        y <= Math.min(LOGO_EDITOR_SIZE - 1, point.y + radius);
+        y++
+      ) {
+        for (
+          let x = Math.max(0, point.x - radius);
+          x <= Math.min(LOGO_EDITOR_SIZE - 1, point.x + radius);
+          x++
+        ) {
+          const index = y * LOGO_EDITOR_SIZE + x;
+          if (mask[index]) {
+            continue;
+          }
+
+          const offset = index * 4;
+          const dr = imageData.data[offset] - sr;
+          const dg = imageData.data[offset + 1] - sg;
+          const db = imageData.data[offset + 2] - sb;
+          const da = imageData.data[offset + 3] - sa;
+          const distance = Math.sqrt(
+            dr * dr +
+            dg * dg +
+            db * db +
+            0.25 * da * da
+          );
+
+          if (distance <= localThreshold) {
+            mask[index] = 1;
+            count++;
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
+          }
+        }
+      }
+    }
+
+    if (count < 2) {
+      setLogoEditorError(
+        'Cette partie est trop fine pour la sélection intelligente. Utilisez Rectangle pour l’encadrer précisément.'
+      );
+      return;
+    }
+
+    createLogoSelection(
+      mask,
+      {
+        x: minX,
+        y: minY,
+        width:
+          maxX - minX + 1,
+        height:
+          maxY - minY + 1,
+      }
+    );
+  };
+
+  const handleSelectWholeLogo =
+    () => {
+      setLogoSelectionMode('all');
+      setLogoEditorError('');
+
+      const mask =
+        new Uint8Array(
+          LOGO_EDITOR_SIZE *
+            LOGO_EDITOR_SIZE
+        );
+      mask.fill(1);
+
+      createLogoSelection(
+        mask,
+        {
+          x: 0,
+          y: 0,
+          width:
+            LOGO_EDITOR_SIZE,
+          height:
+            LOGO_EDITOR_SIZE,
+        }
+      );
+  };
+
+  const handleLogoCanvasPointerDown = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    const point =
+      getLogoCanvasPoint(
+        event
+      );
+
+    if (!point) {
+      return;
+    }
+
+    if (
+      logoSelectionActive &&
+      logoSelectionBounds
+    ) {
+      const centerX =
+        logoSelectionBounds.x +
+        logoSelectionBounds.width / 2 +
+        logoEditorSettings.imageX;
+
+      const centerY =
+        logoSelectionBounds.y +
+        logoSelectionBounds.height / 2 +
+        logoEditorSettings.imageY;
+
+      const width =
+        logoSelectionBounds.width *
+        logoEditorSettings.imageScale;
+
+      const height =
+        logoSelectionBounds.height *
+        logoEditorSettings.imageScale;
+
+      const left =
+        centerX - width / 2;
+      const top =
+        centerY - height / 2;
+
+      const inside =
+        point.x >= left &&
+        point.x <= left + width &&
+        point.y >= top &&
+        point.y <= top + height;
+
+      if (inside) {
+        logoSelectionDragRef.current = {
+          pointerId: event.pointerId,
+          startX: point.x,
+          startY: point.y,
+          startImageX:
+            logoEditorSettings.imageX,
+          startImageY:
+            logoEditorSettings.imageY,
+        };
+
+        event.currentTarget.setPointerCapture(
+          event.pointerId
+        );
+      }
+
+      return;
+    }
+
+    if (
+      logoSelectionMode ===
+      'smart'
+    ) {
+      handleSmartLogoSelection(
+        point
+      );
+      return;
+    }
+
+    if (
+      logoSelectionMode ===
+      'rect'
+    ) {
+      setLogoRectStart(point);
+      setLogoRectCurrent(point);
+      event.currentTarget.setPointerCapture(
+        event.pointerId
+      );
+    }
+  };
+
+  const handleLogoCanvasPointerMove = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    const point =
+      getLogoCanvasPoint(
+        event
+      );
+
+    if (!point) {
+      return;
+    }
+
+    const drag =
+      logoSelectionDragRef.current;
+
+    if (
+      logoSelectionActive &&
+      drag &&
+      drag.pointerId ===
+        event.pointerId
+    ) {
+      setLogoEditorSettings(
+        (previous) => ({
+          ...previous,
+          imageX:
+            drag.startImageX +
+            point.x -
+            drag.startX,
+          imageY:
+            drag.startImageY +
+            point.y -
+            drag.startY,
+        })
+      );
+
+      return;
+    }
+
+    if (
+      logoSelectionMode !==
+        'rect' ||
+      !logoRectStart ||
+      logoSelectionActive
+    ) {
+      return;
+    }
+
+    setLogoRectCurrent(
+      point
+    );
+  };
+
+  const handleLogoCanvasPointerUp = (
+    event: ReactPointerEvent<HTMLCanvasElement>
+  ) => {
+    const drag =
+      logoSelectionDragRef.current;
+
+    if (
+      drag &&
+      drag.pointerId ===
+        event.pointerId
+    ) {
+      logoSelectionDragRef.current =
+        null;
+
+      try {
+        event.currentTarget.releasePointerCapture(
+          event.pointerId
+        );
+      } catch {
+        // Aucun verrou actif.
+      }
+
+      return;
+    }
+
+    if (
+      logoSelectionMode !==
+        'rect' ||
+      !logoRectStart ||
+      logoSelectionActive
+    ) {
+      return;
+    }
+
+    const point =
+      getLogoCanvasPoint(
+        event
+      ) || logoRectCurrent;
+
+    if (!point) {
+      return;
+    }
+
+    const x = Math.min(
+      logoRectStart.x,
+      point.x
+    );
+    const y = Math.min(
+      logoRectStart.y,
+      point.y
+    );
+    const width = Math.max(
+      1,
+      Math.abs(
+        point.x -
+          logoRectStart.x
+      ) + 1
+    );
+    const height = Math.max(
+      1,
+      Math.abs(
+        point.y -
+          logoRectStart.y
+      ) + 1
+    );
+
+    const mask =
+      new Uint8Array(
+        LOGO_EDITOR_SIZE *
+          LOGO_EDITOR_SIZE
+      );
+
+    for (
+      let py = y;
+      py < y + height;
+      py++
+    ) {
+      for (
+        let px = x;
+        px < x + width;
+        px++
+      ) {
+        mask[
+          py *
+            LOGO_EDITOR_SIZE +
+            px
+        ] = 1;
+      }
+    }
+
+    createLogoSelection(
+      mask,
+      {
+        x,
+        y,
+        width,
+        height,
+      }
+    );
+
+    setLogoRectStart(null);
+    setLogoRectCurrent(null);
+
+    try {
+      event.currentTarget.releasePointerCapture(
+        event.pointerId
+      );
+    } catch {
+      // Aucun verrou actif.
+    }
+  };
+
+  const handleDeleteLogoSelection =
+    () => {
+      if (!logoSelectionActive) {
+        return;
+      }
+
+      setLogoSelectionImage('');
+      setLogoEditorSettings(
+        (previous) => ({
+          ...previous,
+          imageScale: 1,
+          imageX: 0,
+          imageY: 0,
+          rotation: 0,
+          hue: 0,
+          saturation: 100,
+          brightness: 100,
+        })
+      );
+    };
+
+  const clearLogoSelectionState =
+    () => {
+      setLogoSelectionActive(false);
+      setLogoSelectionImage('');
+      setLogoSelectionBase('');
+      setLogoSelectionSnapshot('');
+      setLogoSelectionBounds(null);
+      setLogoRectStart(null);
+      setLogoRectCurrent(null);
+      logoSelectionDragRef.current = null;
+    };
+
+  const handleApplyLogoSelection =
+    () => {
+      const canvas =
+        logoEditorCanvasRef.current;
+
+      if (!canvas) {
+        return;
+      }
+
+      setLogoEditorSource(
+        canvas.toDataURL(
+          'image/png'
+        )
+      );
+      clearLogoSelectionState();
+      setLogoEditorSettings(
+        (previous) => ({
+          ...previous,
+          imageScale: 1,
+          imageX: 0,
+          imageY: 0,
+          rotation: 0,
+          hue: 0,
+          saturation: 100,
+          brightness: 100,
+          text: '',
+        })
+      );
+    };
+
+  const handleCancelLogoSelection =
+    () => {
+      if (
+        logoSelectionSnapshot
+      ) {
+        setLogoEditorSource(
+          logoSelectionSnapshot
+        );
+      }
+      clearLogoSelectionState();
+      setLogoEditorSettings(
+        (previous) => ({
+          ...previous,
+          imageScale: 1,
+          imageX: 0,
+          imageY: 0,
+          rotation: 0,
+          hue: 0,
+          saturation: 100,
+          brightness: 100,
+        })
+      );
+    };
+
+  const handleOpenLogoEditor =
+    (
+      logo:
+        | ProjectLogoVersion
+        | null,
+      fallbackImage: string
+    ) => {
+      const source =
+        logo?.imageData ||
+        fallbackImage;
+
+      if (
+        !source ||
+        !source.startsWith(
+          'data:image/'
+        )
+      ) {
+        alert(
+          'Aucun logo valide à modifier.'
+        );
+        return;
+      }
+
+      setLogoEditorSource(
+        source
+      );
+
+      setLogoEditorParentId(
+        logo?.id || null
+      );
+
+      setLogoEditorSettings({
+        ...DEFAULT_LOGO_EDITOR_SETTINGS,
+      });
+      clearLogoSelectionState();
+      setLogoSelectionMode('smart');
+      setLogoSelectionTolerance(35);
+
+      setLogoEditorError('');
+      setLogoEditorOpen(true);
+    };
+
+  const handleCloseLogoEditor =
+    () => {
+      if (logoEditorSaving) {
+        return;
+      }
+
+      setLogoEditorOpen(false);
+      clearLogoSelectionState();
+      setLogoEditorError('');
+    };
+
+  const handleResetLogoEditor =
+    () => {
+      setLogoEditorSettings({
+        ...DEFAULT_LOGO_EDITOR_SETTINGS,
+      });
+      clearLogoSelectionState();
+      setLogoSelectionMode('smart');
+      setLogoSelectionTolerance(35);
+      setLogoEditorError('');
+    };
+
+  const handleSaveLogoEditor =
+    async () => {
+      if (
+        !currentProject ||
+        logoEditorSaving
+      ) {
+        return;
+      }
+
+      const canvas =
+        logoEditorCanvasRef.current;
+
+      if (!canvas) {
+        setLogoEditorError(
+          "L'aperçu du logo n'est pas disponible."
+        );
+        return;
+      }
+
+      setLogoEditorSaving(true);
+      setLogoEditorError('');
+
+      try {
+        const imageData =
+          canvas.toDataURL(
+            'image/png'
+          );
+
+        if (
+          !imageData.startsWith(
+            'data:image/png'
+          )
+        ) {
+          throw new Error(
+            "Impossible d'exporter le logo modifié."
+          );
+        }
+
+        const response =
+          await fetch(
+            `/api/projects/${encodeURIComponent(
+              currentProject.id
+            )}/logos`,
+            {
+              method: 'POST',
+              credentials:
+                'same-origin',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body: JSON.stringify({
+                imageData,
+                status:
+                  'selected',
+                sourceType:
+                  'manual_edit',
+                parentLogoId:
+                  logoEditorParentId,
+                generationPrompt:
+                  currentProject.prompt ||
+                  null,
+                editPrompt:
+                  'Modification manuelle avec Logo Editor V1.1',
+                editData: {
+                  editorVersion:
+                    'v1.1',
+                  ...logoEditorSettings,
+                },
+                imageWidth:
+                  LOGO_EDITOR_SIZE,
+                imageHeight:
+                  LOGO_EDITOR_SIZE,
+              }),
+            }
+          );
+
+        const rawResponse =
+          await response.text();
+
+        let data:
+          | {
+              success?: boolean;
+              error?: string;
+              logo?: ProjectLogoVersion;
+            }
+          | null = null;
+
+        try {
+          data =
+            JSON.parse(
+              rawResponse
+            );
+        } catch {
+          throw new Error(
+            `La route des logos a retourné une réponse invalide (HTTP ${response.status}).`
+          );
+        }
+
+        if (
+          !response.ok ||
+          !data?.success ||
+          !data.logo
+        ) {
+          throw new Error(
+            data?.error ||
+              "Impossible d'enregistrer le logo modifié."
+          );
+        }
+
+        const newVersion =
+          data.logo;
+
+        const savedLogo: SavedLogo = {
+          id:
+            Number(
+              newVersion.versionNumber
+            ) || 1,
+          image:
+            newVersion.imageData ||
+            imageData,
+          mediaType:
+            newVersion.imageMimeType ||
+            'image/png',
+          model:
+            'logo-editor-v1',
+          selectedAt:
+            newVersion.selectedAt ||
+            new Date().toISOString(),
+          sha256:
+            newVersion.sha256,
+          logoVersionId:
+            String(
+              newVersion.id
+            ),
+          status:
+            'selected',
+        };
+
+        const projectSaved =
+          await updateProject(
+            currentProject.id,
+            {
+              logo:
+                JSON.stringify(
+                  savedLogo
+                ),
+              apkStatus:
+                'none',
+              apkRunId:
+                null,
+              apkError:
+                '',
+            }
+          );
+
+        if (!projectSaved) {
+          throw new Error(
+            "La nouvelle version a été créée, mais le projet n'a pas pu être synchronisé."
+          );
+        }
+
+        await refreshLogoVersions(
+          currentProject.id
+        );
+
+        setLogoEditorOpen(false);
+
+        alert(
+          `Logo modifié enregistré comme version ${newVersion.versionNumber}. L'ancien logo officiel reste protégé jusqu'à une nouvelle officialisation.`
+        );
+      } catch (error) {
+        console.error(
+          'Erreur Logo Editor V1.1 :',
+          error
+        );
+
+        setLogoEditorError(
+          error instanceof Error
+            ? error.message
+            : "Impossible d'enregistrer le logo modifié."
+        );
+      } finally {
+        setLogoEditorSaving(
+          false
+        );
+      }
+    };
+
+  const handleSetOfficialLogo =
+    async (
+      logoId: string
+    ) => {
+      if (
+        !currentProject ||
+        officializingLogoId
+      ) {
+        return;
+      }
+
+      const confirmed =
+        window.confirm(
+          "Définir cette version comme identité officielle de l'application ?"
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      setOfficializingLogoId(
+        logoId
+      );
+      setLogoHistoryError('');
+
+      try {
+        const response =
+          await fetch(
+            `/api/projects/${encodeURIComponent(
+              currentProject.id
+            )}/logos/${encodeURIComponent(
+              logoId
+            )}/official`,
+            {
+              method: 'POST',
+              credentials: 'same-origin',
+              cache: 'no-store',
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.logo
+        ) {
+          throw new Error(
+            data?.error ||
+              "Impossible de définir ce logo comme identité officielle."
+          );
+        }
+
+        const projectResponse =
+          await fetch(
+            `/api/projects/${encodeURIComponent(
+              currentProject.id
+            )}`,
+            {
+              method: 'GET',
+              credentials: 'same-origin',
+              cache: 'no-store',
+            }
+          );
+
+        const projectData =
+          await projectResponse.json();
+
+        if (
+          projectResponse.ok &&
+          projectData.success &&
+          projectData.project
+        ) {
+          const refreshedProject =
+            normalizeProject(
+              projectData.project
+            );
+
+          setCurrentProject(
+            refreshedProject
+          );
+
+          setProjects(
+            (previous) =>
+              previous.map(
+                (project) =>
+                  project.id ===
+                  refreshedProject.id
+                    ? refreshedProject
+                    : project
+              )
+          );
+        }
+
+        await refreshLogoVersions(
+          currentProject.id
+        );
+
+        alert(
+          'Logo défini comme identité officielle.'
+        );
+      } catch (error) {
+        console.error(
+          'Erreur identité officielle :',
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Impossible de définir le logo comme identité officielle.";
+
+        setLogoHistoryError(
+          message
+        );
+
+        alert(message);
+      } finally {
+        setOfficializingLogoId(
+          null
+        );
+      }
     };
 
   const handleBuildAPK =
@@ -2899,24 +4819,276 @@ export default function Home() {
 
             {getProjectLogoImage(
               currentProject
-            ) && (
-              <div className="mt-5 flex flex-col gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 sm:flex-row sm:items-center">
-                <img
-                  src={getProjectLogoImage(
-                    currentProject
+            ) && (() => {
+              const currentImage =
+                getProjectLogoImage(
+                  currentProject
+                );
+
+              const currentVersion =
+                logoVersions.find(
+                  (logo) =>
+                    logo.imageData ===
+                    currentImage
+                ) ||
+                selectedLogoVersion ||
+                officialLogoVersion ||
+                null;
+
+              const isOfficial =
+                currentVersion?.status ===
+                  'official' ||
+                officialLogoVersion?.imageData ===
+                  currentImage;
+
+              return (
+                <div
+                  className={`mt-5 rounded-xl border p-4 ${
+                    isOfficial
+                      ? 'border-amber-400/30 bg-amber-500/5'
+                      : 'border-emerald-500/20 bg-emerald-500/5'
+                  }`}
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-4">
+                      <img
+                        src={
+                          currentImage
+                        }
+                        alt={`Logo de ${currentProject.name}`}
+                        className="h-20 w-20 rounded-2xl object-cover"
+                      />
+
+                      <div>
+                        <div
+                          className={`text-sm font-semibold ${
+                            isOfficial
+                              ? 'text-amber-300'
+                              : 'text-emerald-300'
+                          }`}
+                        >
+                          {isOfficial
+                            ? '★ Logo officiel'
+                            : '✓ Logo sélectionné'}
+                        </div>
+
+                        <div className="mt-1 text-xs text-white/45">
+                          {currentVersion
+                            ? `Version ${currentVersion.versionNumber} · ${currentVersion.sourceType}`
+                            : "Logo enregistré avec l'application."}
+                        </div>
+
+                        {currentVersion?.sha256 && (
+                          <div className="mt-1 font-mono text-[10px] text-white/30">
+                            SHA-256 :{' '}
+                            {currentVersion.sha256.slice(
+                              0,
+                              16
+                            )}
+                            …
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleOpenLogoEditor(
+                            currentVersion,
+                            currentImage
+                          )
+                        }
+                        className="rounded-xl bg-sky-500/15 px-4 py-2 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/25"
+                      >
+                        ✏️ Modifier ce logo
+                      </button>
+
+                      {currentVersion &&
+                        !isOfficial && (
+                          <button
+                            type="button"
+                            disabled={
+                              officializingLogoId ===
+                              currentVersion.id
+                            }
+                            onClick={() =>
+                              void handleSetOfficialLogo(
+                                currentVersion.id
+                              )
+                            }
+                            className="rounded-xl bg-amber-500/15 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {officializingLogoId ===
+                            currentVersion.id
+                              ? 'Officialisation...'
+                              : '★ Définir comme identité officielle'}
+                          </button>
+                        )}
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setShowLogoHistory(
+                            (value) =>
+                              !value
+                          )
+                        }
+                        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/70 transition hover:bg-white/10"
+                      >
+                        {showLogoHistory
+                          ? "Masquer l'historique"
+                          : `Historique des versions (${logoVersions.length})`}
+                      </button>
+                    </div>
+                  </div>
+
+                  {isOfficial && (
+                    <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/80">
+                      Identité officielle dans SimiRork. Cela ne signifie pas encore que la marque est juridiquement déposée.
+                    </div>
                   )}
-                  alt={`Logo sélectionné pour ${currentProject.name}`}
-                  className="h-20 w-20 rounded-2xl object-cover"
-                />
+                </div>
+              );
+            })()}
 
-                <div>
-                  <div className="text-sm font-semibold text-emerald-300">
-                    ✓ Logo sélectionné
+            {logoHistoryError && (
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-300">
+                {logoHistoryError}
+              </div>
+            )}
+
+            {showLogoHistory && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">
+                      Historique des logos
+                    </h3>
+                    <p className="mt-1 text-xs text-white/40">
+                      Chaque version reste conservée avec son empreinte numérique.
+                    </p>
                   </div>
 
-                  <div className="mt-1 text-xs text-white/45">
-                    Ce logo est enregistré avec l'application.
-                  </div>
+                  <button
+                    type="button"
+                    disabled={
+                      logoHistoryLoading
+                    }
+                    onClick={() =>
+                      void refreshLogoVersions(
+                        currentProject.id
+                      )
+                    }
+                    className="rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60 hover:bg-white/10 disabled:opacity-40"
+                  >
+                    {logoHistoryLoading
+                      ? 'Actualisation...'
+                      : 'Actualiser'}
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {logoVersions.length ===
+                  0 ? (
+                    <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs text-white/40">
+                      Aucune version enregistrée.
+                    </div>
+                  ) : (
+                    logoVersions.map(
+                      (version) => (
+                        <div
+                          key={
+                            version.id
+                          }
+                          className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={
+                                version.imageData
+                              }
+                              alt={`Logo version ${version.versionNumber}`}
+                              className="h-14 w-14 rounded-xl object-cover"
+                            />
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium">
+                                  Version{' '}
+                                  {
+                                    version.versionNumber
+                                  }
+                                </span>
+
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                    version.status ===
+                                    'official'
+                                      ? 'bg-amber-500/15 text-amber-300'
+                                      : version.status ===
+                                          'selected'
+                                        ? 'bg-emerald-500/15 text-emerald-300'
+                                        : version.status ===
+                                            'edited'
+                                          ? 'bg-violet-500/15 text-violet-300'
+                                          : 'bg-white/5 text-white/45'
+                                  }`}
+                                >
+                                  {
+                                    version.status
+                                  }
+                                </span>
+                              </div>
+
+                              <div className="mt-1 text-[11px] text-white/40">
+                                {new Date(
+                                  version.createdAt
+                                ).toLocaleString(
+                                  'fr-FR'
+                                )}{' '}
+                                ·{' '}
+                                {
+                                  version.sourceType
+                                }
+                              </div>
+
+                              <div className="mt-1 font-mono text-[10px] text-white/25">
+                                {version.sha256.slice(
+                                  0,
+                                  24
+                                )}
+                                …
+                              </div>
+                            </div>
+                          </div>
+
+                          {version.status !==
+                            'official' && (
+                            <button
+                              type="button"
+                              disabled={
+                                officializingLogoId ===
+                                version.id
+                              }
+                              onClick={() =>
+                                void handleSetOfficialLogo(
+                                  version.id
+                                )
+                              }
+                              className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {officializingLogoId ===
+                              version.id
+                                ? 'Officialisation...'
+                                : 'Définir officiel'}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    )
+                  )}
                 </div>
               </div>
             )}
@@ -3202,6 +5374,447 @@ export default function Home() {
               {currentProject.apkError}
             </div>
           )}
+
+        {logoEditorOpen && (
+          <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/80 px-4 py-6 backdrop-blur-sm">
+            <div className="mx-auto w-full max-w-6xl rounded-2xl border border-white/10 bg-[#0b1120] p-4 shadow-2xl sm:p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold">
+                    ✏️ Logo Editor V1.1.1
+                  </h2>
+                  <p className="mt-1 text-sm text-white/45">
+                    Modifiez le logo puis enregistrez-le comme une nouvelle version. L’original reste conservé.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCloseLogoEditor}
+                  disabled={logoEditorSaving}
+                  className="rounded-lg px-3 py-2 text-white/50 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+                >
+                  ✕ Fermer
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-sky-400/40 bg-sky-500/[0.08] p-4 shadow-[0_0_0_1px_rgba(56,189,248,0.08)]">
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <div className="text-sm font-semibold text-sky-100">Mode de sélection</div>
+                    <p className="mt-1 text-xs text-white/50">
+                      Le mode choisi reste clairement surligné. Une fois une zone sélectionnée, son contour clignote et vous pouvez la déplacer directement avec la souris.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <button
+                      type="button"
+                      disabled={logoSelectionActive}
+                      onClick={() => {
+                        setLogoSelectionMode('smart');
+                        setLogoEditorError('');
+                        setLogoRectStart(null);
+                        setLogoRectCurrent(null);
+                      }}
+                      className={`rounded-xl border px-3 py-3 text-xs font-bold transition ${logoSelectionMode === 'smart'
+                        ? 'border-sky-300 bg-sky-300 text-slate-950 ring-2 ring-sky-300/50'
+                        : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'} disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      {logoSelectionMode === 'smart' ? '✓ ' : ''}Intelligent
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={logoSelectionActive}
+                      onClick={() => {
+                        setLogoSelectionMode('rect');
+                        setLogoEditorError('');
+                        setLogoRectStart(null);
+                        setLogoRectCurrent(null);
+                      }}
+                      className={`rounded-xl border px-3 py-3 text-xs font-bold transition ${logoSelectionMode === 'rect'
+                        ? 'border-amber-300 bg-amber-300 text-slate-950 ring-2 ring-amber-300/50'
+                        : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'} disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      {logoSelectionMode === 'rect' ? '✓ ' : ''}Rectangle
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={logoSelectionActive}
+                      onClick={handleSelectWholeLogo}
+                      className={`rounded-xl border px-3 py-3 text-xs font-bold transition ${logoSelectionMode === 'all'
+                        ? 'border-emerald-300 bg-emerald-300 text-slate-950 ring-2 ring-emerald-300/50'
+                        : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'} disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      {logoSelectionMode === 'all' ? '✓ ' : ''}Logo entier
+                    </button>
+                  </div>
+
+                  <div className={`rounded-xl border px-4 py-3 text-xs font-semibold ${
+                    logoSelectionActive
+                      ? 'border-fuchsia-400/50 bg-fuchsia-500/10 text-fuchsia-200'
+                      : logoSelectionMode === 'smart'
+                        ? 'border-sky-400/30 bg-sky-500/10 text-sky-200'
+                        : logoSelectionMode === 'rect'
+                          ? 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                          : 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                  }`}>
+                    {logoSelectionActive
+                      ? 'PHASE 2 — Sélection active : cliquez-glissez directement la sélection pour la déplacer.'
+                      : logoSelectionMode === 'smart'
+                        ? 'PHASE 1 — Intelligent : cliquez une fois sur la forme à isoler.'
+                        : logoSelectionMode === 'rect'
+                          ? 'PHASE 1 — Rectangle : maintenez le clic, encadrez la zone, puis relâchez.'
+                          : 'PHASE 1 — Logo entier : le logo complet va être sélectionné.'}
+                  </div>
+
+                  {logoSelectionMode === 'smart' && !logoSelectionActive && (
+                    <label className="block text-xs text-white/60">
+                      Tolérance intelligente : {logoSelectionTolerance}%
+                      <input
+                        type="range"
+                        min="2"
+                        max="100"
+                        step="1"
+                        value={logoSelectionTolerance}
+                        onChange={(event) => setLogoSelectionTolerance(Number(event.target.value))}
+                        className="mt-2 w-full"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {logoSelectionActive && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className="mr-1 text-xs font-semibold text-emerald-300">✓ Sélection active</span>
+                    <button
+                      type="button"
+                      onClick={handleDeleteLogoSelection}
+                      className="rounded-lg bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-200 hover:bg-red-500/25"
+                    >
+                      🗑 Supprimer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyLogoSelection}
+                      className="rounded-lg bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25"
+                    >
+                      ✓ Appliquer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelLogoSelection}
+                      className="rounded-lg bg-white/5 px-3 py-2 text-xs font-semibold text-white/65 hover:bg-white/10"
+                    >
+                      ✕ Annuler
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+                <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                  <div className="mx-auto max-w-[560px]">
+                    <div className="relative overflow-hidden rounded-2xl">
+                      <canvas
+                        ref={logoEditorCanvasRef}
+                        width={LOGO_EDITOR_SIZE}
+                        height={LOGO_EDITOR_SIZE}
+                        onPointerDown={handleLogoCanvasPointerDown}
+                        onPointerMove={handleLogoCanvasPointerMove}
+                        onPointerUp={handleLogoCanvasPointerUp}
+                        onPointerCancel={() => {
+                          setLogoRectStart(null);
+                          setLogoRectCurrent(null);
+                          logoSelectionDragRef.current = null;
+                        }}
+                        style={{ touchAction: 'none' }}
+                        className={`aspect-square w-full border border-white/10 bg-white object-contain shadow-xl ${logoSelectionActive ? 'cursor-move' : 'cursor-crosshair'}`}
+                      />
+
+                      {logoSelectionBounds && logoSelectionActive && (
+                        <div
+                          className="pointer-events-none absolute box-border border-4 border-dashed border-fuchsia-400 bg-fuchsia-400/10 shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_0_18px_rgba(232,121,249,0.95)] animate-pulse"
+                          style={{
+                            left: `${((logoSelectionBounds.x + logoSelectionBounds.width / 2 + logoEditorSettings.imageX - (logoSelectionBounds.width * logoEditorSettings.imageScale) / 2) / LOGO_EDITOR_SIZE) * 100}%`,
+                            top: `${((logoSelectionBounds.y + logoSelectionBounds.height / 2 + logoEditorSettings.imageY - (logoSelectionBounds.height * logoEditorSettings.imageScale) / 2) / LOGO_EDITOR_SIZE) * 100}%`,
+                            width: `${((logoSelectionBounds.width * logoEditorSettings.imageScale) / LOGO_EDITOR_SIZE) * 100}%`,
+                            height: `${((logoSelectionBounds.height * logoEditorSettings.imageScale) / LOGO_EDITOR_SIZE) * 100}%`,
+                          }}
+                        />
+                      )}
+
+                      {logoRectStart && logoRectCurrent && !logoSelectionActive && logoSelectionMode === 'rect' && (
+                        <div
+                          className="pointer-events-none absolute border-2 border-dashed border-amber-300 bg-amber-300/10"
+                          style={{
+                            left: `${(Math.min(logoRectStart.x, logoRectCurrent.x) / LOGO_EDITOR_SIZE) * 100}%`,
+                            top: `${(Math.min(logoRectStart.y, logoRectCurrent.y) / LOGO_EDITOR_SIZE) * 100}%`,
+                            width: `${(Math.abs(logoRectCurrent.x - logoRectStart.x) / LOGO_EDITOR_SIZE) * 100}%`,
+                            height: `${(Math.abs(logoRectCurrent.y - logoRectStart.y) / LOGO_EDITOR_SIZE) * 100}%`,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <p className="mt-3 text-center text-xs text-white/40">
+                      {logoSelectionActive
+                        ? 'Les réglages Image et Couleurs agissent uniquement sur la sélection. Cliquez sur Appliquer ou Annuler avant de changer de mode.'
+                        : logoSelectionMode === 'smart'
+                          ? 'Intelligent : un clic sur la partie à isoler. Ajustez la tolérance si nécessaire.'
+                          : 'Rectangle : maintenez le clic gauche, glissez pour entourer la partie, puis relâchez.'}
+                    </p>
+                  </div>
+
+                  {logoEditorError && (
+                    <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                      {logoEditorError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+                  <div>
+                    <h3 className="font-semibold">{logoSelectionActive ? 'Sélection' : 'Image complète'}</h3>
+                    <div className="mt-4 space-y-4">
+                      <label className="block text-xs text-white/60">
+                        Taille : {Math.round(logoEditorSettings.imageScale * 100)}%
+                        <input
+                          type="range"
+                          min="0.4"
+                          max="2"
+                          step="0.01"
+                          value={logoEditorSettings.imageScale}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              imageScale: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <div className="rounded-xl border border-fuchsia-400/25 bg-fuchsia-500/10 px-4 py-3 text-xs text-fuchsia-100">
+                        <div className="font-semibold">Déplacement direct</div>
+                        <div className="mt-1 text-fuchsia-100/70">
+                          {logoSelectionActive
+                            ? 'Cliquez sur la sélection dans le logo, maintenez le clic et déplacez-la avec la souris.'
+                            : 'Sélectionnez d’abord une partie du logo. Vous pourrez ensuite la déplacer directement avec la souris.'}
+                        </div>
+                      </div>
+
+                      <label className="block text-xs text-white/60">
+                        Rotation : {logoEditorSettings.rotation}°
+                        <input
+                          type="range"
+                          min="-180"
+                          max="180"
+                          step="1"
+                          value={logoEditorSettings.rotation}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              rotation: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/10 pt-5">
+                    <h3 className="font-semibold">Couleurs</h3>
+                    <div className="mt-4 space-y-4">
+                      <label className="block text-xs text-white/60">
+                        Teinte : {logoEditorSettings.hue}°
+                        <input
+                          type="range"
+                          min="-180"
+                          max="180"
+                          step="1"
+                          value={logoEditorSettings.hue}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              hue: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <label className="block text-xs text-white/60">
+                        Saturation : {logoEditorSettings.saturation}%
+                        <input
+                          type="range"
+                          min="0"
+                          max="200"
+                          step="1"
+                          value={logoEditorSettings.saturation}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              saturation: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <label className="block text-xs text-white/60">
+                        Luminosité : {logoEditorSettings.brightness}%
+                        <input
+                          type="range"
+                          min="30"
+                          max="180"
+                          step="1"
+                          value={logoEditorSettings.brightness}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              brightness: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-3 text-xs text-white/60">
+                        Couleur du fond du logo
+                        <input
+                          type="color"
+                          value={logoEditorSettings.backgroundColor}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              backgroundColor: event.target.value,
+                            }))
+                          }
+                          className="h-10 w-16 cursor-pointer rounded border border-white/10 bg-transparent"
+                        />
+                      </label>
+                      <p className="text-[11px] leading-5 text-white/40">
+                        Le fond d’origine étant intégré au JPEG, SimiRork remplace maintenant automatiquement les pixels proches de la couleur des coins du logo par la couleur choisie.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/10 pt-5">
+                    <h3 className="font-semibold">Texte</h3>
+                    <div className="mt-4 space-y-4">
+                      <input
+                        type="text"
+                        value={logoEditorSettings.text}
+                        onChange={(event) =>
+                          setLogoEditorSettings((previous) => ({
+                            ...previous,
+                            text: event.target.value,
+                          }))
+                        }
+                        placeholder="Ajouter un texte..."
+                        className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-sm outline-none focus:border-white/30"
+                      />
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs text-white/60">Couleur du texte</span>
+                        <input
+                          type="color"
+                          value={logoEditorSettings.textColor}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              textColor: event.target.value,
+                            }))
+                          }
+                          className="h-10 w-16 cursor-pointer rounded border border-white/10 bg-transparent"
+                        />
+                      </div>
+
+                      <label className="block text-xs text-white/60">
+                        Taille du texte : {logoEditorSettings.textSize}px
+                        <input
+                          type="range"
+                          min="14"
+                          max="120"
+                          step="1"
+                          value={logoEditorSettings.textSize}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              textSize: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <label className="block text-xs text-white/60">
+                        Texte X : {logoEditorSettings.textX}px
+                        <input
+                          type="range"
+                          min="-220"
+                          max="220"
+                          step="1"
+                          value={logoEditorSettings.textX}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              textX: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+
+                      <label className="block text-xs text-white/60">
+                        Texte Y : {logoEditorSettings.textY}px
+                        <input
+                          type="range"
+                          min="-220"
+                          max="220"
+                          step="1"
+                          value={logoEditorSettings.textY}
+                          onChange={(event) =>
+                            setLogoEditorSettings((previous) => ({
+                              ...previous,
+                              textY: Number(event.target.value),
+                            }))
+                          }
+                          className="mt-2 w-full"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 border-t border-white/10 pt-5 sm:flex-row">
+                    <button
+                      type="button"
+                      onClick={handleResetLogoEditor}
+                      disabled={logoEditorSaving}
+                      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm transition hover:bg-white/10 disabled:opacity-40"
+                    >
+                      Réinitialiser
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveLogoEditor()}
+                      disabled={logoEditorSaving}
+                      className="flex-1 rounded-xl bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {logoEditorSaving
+                        ? 'Enregistrement...'
+                        : '✓ Enregistrer nouvelle version'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showHistory && (
           <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 px-4 py-8 backdrop-blur-sm">
