@@ -1,1053 +1,379 @@
-name: Build APK
+name: Build APK Android
 
 on:
+  workflow_dispatch:
+
   repository_dispatch:
     types:
       - build_apk
-  workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Recuperer le code
-        uses: actions/checkout@v4
+      - name: Récupérer le projet
+        uses: actions/checkout@v7
 
-      - name: Installer Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Installer Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Installer les dependances npm
-        shell: bash
-        run: |
-          set -e
-          echo "=========================================="
-          echo "INSTALLATION DES DEPENDANCES NPM"
-          echo "=========================================="
-          npm ci
-
-      - name: Installer les outils Android
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: false
-          packages: 'platform-tools'
-
-      - name: Verifier les outils
-        shell: bash
-        run: |
-          set -e
-          echo "=========================================="
-          echo "VERIFICATION DES OUTILS"
-          echo "=========================================="
-
-          echo "Java :"
-          java -version
-
-          echo ""
-          echo "Node :"
-          node --version
-
-          echo ""
-          echo "npm :"
-          npm --version
-
-          echo ""
-          echo "ADB :"
-          adb version
-
-          echo ""
-          echo "Capacitor :"
-          npx cap --version
-
-          echo ""
-          echo "ANDROID_HOME :"
-          echo "${ANDROID_HOME:-non defini}"
-
-          echo "=========================================="
-
-      - name: Synchroniser Capacitor Android
-        shell: bash
-        run: |
-          set -e
-          echo "=========================================="
-          echo "SYNCHRONISATION CAPACITOR ANDROID"
-          echo "=========================================="
-
-          npx cap sync android
-
-          echo ""
-          echo "Verification du dossier Cordova Android..."
-
-          if [ ! -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-            echo "ERREUR : cordova.variables.gradle est toujours absent."
-            echo ""
-            echo "Contenu de android :"
-            find android -maxdepth 3 -type f | sort | head -200
-            exit 1
-          fi
-
-          echo "cordova.variables.gradle trouve."
-
-      - name: Recuperer le HTML
-        id: html
-        env:
-          HTML_BASE64: ${{ github.event.client_payload.html_base64 }}
-        shell: bash
-        run: |
-          set -e
-          echo "=========================================="
-          echo "RECUPERATION DU HTML"
-          echo "=========================================="
-
-          if [ -z "$HTML_BASE64" ]; then
-            echo "ERREUR : client_payload.html_base64 est absent."
-            exit 1
-          fi
-
-          printf '%s' "$HTML_BASE64" | base64 --decode > generated.html
-
-          if [ ! -s generated.html ]; then
-            echo "ERREUR : generated.html est vide."
-            exit 1
-          fi
-
-          echo "HTML recupere avec succes."
-          echo "Taille : $(wc -c < generated.html) octets"
-
-      - name: Preparer l'identite de l'application
-        id: identity
+      - name: Préparer l'identité de l'application
+        id: app_info
         env:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
-          PROJECT_ID_INPUT: ${{ github.event.client_payload.project_id }}
-        shell: bash
         run: |
-          set -e
+          APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
+          APP_NAME=$(printf '%s' "$APP_NAME" | tr '\r\n\t' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | sed 's/^ *//;s/ *$//')
+          [ -n "$APP_NAME" ] || APP_NAME="SimiRork App"
 
-          echo "=========================================="
-          echo "PAYLOAD APK RECU PAR GITHUB"
-          echo "=========================================="
+          ASCII_NAME=$(printf '%s' "$APP_NAME" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$APP_NAME")
 
-          if [ -z "$APP_NAME_INPUT" ]; then
-            echo "ERREUR : client_payload.app_name est ABSENT."
-            exit 1
-          fi
+          FILE_SLUG=$(printf '%s' "$ASCII_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9][^a-z0-9]*/-/g' | sed 's/^-//;s/-$//')
+          [ -n "$FILE_SLUG" ] || FILE_SLUG="simirork-app"
+          APK_FILENAME="${FILE_SLUG}.apk"
 
-          if [ -z "$PROJECT_ID_INPUT" ]; then
-            echo "ERREUR : client_payload.project_id est ABSENT."
-            exit 1
-          fi
+          PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
+          [ -n "$PACKAGE_SLUG" ] || PACKAGE_SLUG="app"
+          FIRST_CHAR=$(printf '%s' "$PACKAGE_SLUG" | cut -c1)
+          case "$FIRST_CHAR" in
+            [a-z]) ;;
+            *) PACKAGE_SLUG="app${PACKAGE_SLUG}" ;;
+          esac
+          PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          APP_NAME="$APP_NAME_INPUT"
-          PROJECT_ID="$PROJECT_ID_INPUT"
+          HASH_VALUE=$(printf '%s' "$APP_NAME" | sha256sum | cut -c1-8)
+          APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.a${HASH_VALUE}"
 
-          echo "Nom recu        : $APP_NAME"
-          echo "Project ID recu : $PROJECT_ID"
-
-          echo "=========================================="
-          echo "GENERATION DE L'IDENTITE DETERMINISTE"
-          echo "=========================================="
-
-          # L'identite Android depend uniquement du projectId.
-          # Ainsi, un meme projet conserve toujours le meme package Android,
-          # meme si son nom est modifie.
-          HASH=$(printf '%s' "$PROJECT_ID" | sha256sum | cut -c1-16)
-
-          SAFE_NAME=$(printf '%s' "$APP_NAME" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed 's/[^a-z0-9]/_/g' \
-            | sed 's/__*/_/g' \
-            | sed 's/^_//' \
-            | sed 's/_$//')
-
-          if [ -z "$SAFE_NAME" ]; then
-            SAFE_NAME="app"
-          fi
-
-          SAFE_NAME=$(printf '%s' "$SAFE_NAME" | cut -c1-20)
-
-          if [[ "$SAFE_NAME" =~ ^[0-9] ]]; then
-            SAFE_NAME="app_${SAFE_NAME}"
-          fi
-
-          # Package Android unique et stable par projet.
-          APPLICATION_ID="com.yoski.app.p${HASH}"
-
-          if [[ ! "$APPLICATION_ID" =~ ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$ ]]; then
-            echo "ERREUR : Application ID Android invalide : $APPLICATION_ID"
-            exit 1
-          fi
-
-          echo ""
-          echo "Nom            : $APP_NAME"
-          echo "Project ID     : $PROJECT_ID"
-          echo "Hash           : $HASH"
-          echo "Safe name      : $SAFE_NAME"
-          echo "Application ID : $APPLICATION_ID"
-          echo ""
-
-          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
-          echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
-          echo "safe_name=$SAFE_NAME" >> "$GITHUB_OUTPUT"
-          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
-          echo "application_id=$APPLICATION_ID"
-
-          echo "application_id=$APPLICATION_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Verifier le projet Android
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "VERIFICATION DU PROJET ANDROID"
-          echo "=========================================="
-
-          if [ ! -d "android" ]; then
-            echo "ERREUR : dossier android absent."
-            exit 1
-          fi
-
-          if [ ! -f "android/gradlew" ]; then
-            echo "ERREUR : android/gradlew absent."
-            exit 1
-          fi
-
-          chmod +x android/gradlew
-
-          echo "Projet Android trouve."
-
-      - name: Preparer le projet Android
-        env:
-          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "PREPARATION DU PROJET ANDROID"
-          echo "=========================================="
-
-          echo "Application ID : $APPLICATION_ID"
           echo "Nom application : $APP_NAME"
+          echo "Application ID  : $APPLICATION_ID"
+          echo "Nom fichier APK : $APK_FILENAME"
 
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          import re
+          {
+            echo "app_name=$APP_NAME"
+            echo "application_id=$APPLICATION_ID"
+            echo "apk_filename=$APK_FILENAME"
+          } >> "$GITHUB_OUTPUT"
 
-          application_id = os.environ["APPLICATION_ID"]
-          app_name = os.environ["APP_NAME"]
-
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-
-          if manifest.exists():
-              text = manifest.read_text(encoding="utf-8")
-
-              text = re.sub(
-                  r'package="[^"]+"',
-                  f'package="{application_id}"',
-                  text,
-                  count=1
-              )
-
-              text = re.sub(
-                  r'android:label="SimiRork"',
-                  'android:label="@string/app_name"',
-                  text
-              )
-
-              manifest.write_text(text, encoding="utf-8")
-
-          build_gradle = Path("android/app/build.gradle")
-
-          if build_gradle.exists():
-              text = build_gradle.read_text(encoding="utf-8")
-
-              text = re.sub(
-                  r'applicationId\s+"[^"]+"',
-                  f'applicationId "{application_id}"',
-                  text
-              )
-
-              build_gradle.write_text(text, encoding="utf-8")
-
-          build_gradle_kts = Path("android/app/build.gradle.kts")
-
-          if build_gradle_kts.exists():
-              text = build_gradle_kts.read_text(encoding="utf-8")
-
-              text = re.sub(
-                  r'applicationId\s*=\s*"[^"]+"',
-                  f'applicationId = "{application_id}"',
-                  text
-              )
-
-              build_gradle_kts.write_text(text, encoding="utf-8")
-
-          print("Configuration Android preparee.")
-          PY
-
-      - name: Configurer Capacitor pour l'APK local
+      - name: Injecter le HTML généré
+        if: ${{ github.event_name == 'repository_dispatch' }}
         env:
-          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
-        shell: bash
+          HTML_BASE64: ${{ github.event.client_payload.html_base64 }}
         run: |
           set -e
+          [ -n "$HTML_BASE64" ] || { echo "ERREUR : aucun HTML reçu."; exit 1; }
+          mkdir -p public
+          printf '%s' "$HTML_BASE64" | base64 --decode > public/index.html
+          test -s public/index.html || { echo "ERREUR : public/index.html est vide."; exit 1; }
+          echo "HTML injecté : $(wc -c < public/index.html) octets"
 
-          echo "=========================================="
-          echo "CONFIGURATION CAPACITOR APK LOCAL"
-          echo "=========================================="
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
-          CONFIG="android/app/src/main/assets/capacitor.config.json"
+      - name: Installer Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '21'
 
-          if [ ! -f "$CONFIG" ]; then
-            echo "ERREUR : capacitor.config.json absent."
-            echo ""
-            echo "Contenu des assets Android :"
+      - name: Préparer Android SDK
+        uses: android-actions/setup-android@v4
 
-            find android/app/src/main/assets \
-              -maxdepth 2 \
-              -type f \
-              -print 2>/dev/null || true
+      - name: Installer les composants Android
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
 
-            exit 1
-          fi
+      - name: Installer les dépendances Node
+        run: npm ci
 
-          python3 - <<'PY'
+      - name: Configurer Capacitor pour l'application
+        env:
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+        run: |
+          APP_NAME="$APP_NAME" APPLICATION_ID="$APPLICATION_ID" python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          path = Path("android/app/src/main/assets/capacitor.config.json")
-
-          data = json.loads(
-              path.read_text(encoding="utf-8")
-          )
-
-          server = data.get("server")
-
-          if isinstance(server, dict):
-              server.pop("url", None)
-
-              if not server:
-                  data.pop("server", None)
-
-          data["appId"] = os.environ["APPLICATION_ID"]
-          data["appName"] = os.environ["APP_NAME"]
-          data["webDir"] = "public"
-
-          path.write_text(
-              json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-              encoding="utf-8"
-          )
-
-          print("Configuration Capacitor locale appliquee.")
-          print("server.url : supprime")
-          print("appId      :", data["appId"])
-          print("appName    :", data["appName"])
-          print("webDir     :", data["webDir"])
-          PY
-
-      - name: Injecter le HTML
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "INJECTION DU HTML"
-          echo "=========================================="
-
-          WEB_ASSETS="android/app/src/main/assets/public"
-
-          mkdir -p "$WEB_ASSETS"
-
-          cp generated.html "$WEB_ASSETS/index.html"
-
-          if [ ! -s "$WEB_ASSETS/index.html" ]; then
-            echo "ERREUR : index.html genere est vide."
-            exit 1
-          fi
-
-          echo "HTML copie dans : $WEB_ASSETS/index.html"
-          echo "Taille : $(wc -c < "$WEB_ASSETS/index.html") octets"
-
-      - name: Generer l'icone unique
-        env:
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
-          HASH: ${{ steps.identity.outputs.hash }}
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "GENERATION DE L'ICONE PERSONNALISEE"
-          echo "=========================================="
-
-          python3 - <<'PY'
-          import hashlib
-          import os
-          import struct
-          import zlib
-          from pathlib import Path
-
           app_name = os.environ["APP_NAME"]
-          hash_value = os.environ["HASH"]
+          application_id = os.environ["APPLICATION_ID"]
 
-          digest = hashlib.sha256(
-              f"{app_name}|{hash_value}".encode("utf-8")
-          ).digest()
+          config = f"""import type {{ CapacitorConfig }} from '@capacitor/cli';
 
-          palette = [
-              (15, 76, 129),
-              (16, 87, 78),
-              (83, 55, 122),
-              (128, 52, 52),
-              (38, 78, 94),
-              (92, 69, 35),
-              (72, 55, 110),
-              (21, 94, 67),
-              (56, 68, 110),
-              (105, 52, 76),
-              (42, 82, 104),
-              (91, 61, 43),
-          ]
+          const config: CapacitorConfig = {{
+            appId: {json.dumps(application_id, ensure_ascii=False)},
+            appName: {json.dumps(app_name, ensure_ascii=False)},
+            webDir: 'public'
+          }};
 
-          r, g, b = palette[digest[0] % len(palette)]
-
-          letter = next(
-              (
-                  char.upper()
-                  for char in app_name
-                  if char.isascii() and char.isalnum()
-              ),
-              "A"
-          )
-
-          FONT = {
-              "A": ["01110","10001","10001","11111","10001","10001","10001"],
-              "B": ["11110","10001","10001","11110","10001","10001","11110"],
-              "C": ["01111","10000","10000","10000","10000","10000","01111"],
-              "D": ["11110","10001","10001","10001","10001","10001","11110"],
-              "E": ["11111","10000","10000","11110","10000","10000","11111"],
-              "F": ["11111","10000","10000","11110","10000","10000","10000"],
-              "G": ["01111","10000","10000","10111","10001","10001","01111"],
-              "H": ["10001","10001","10001","11111","10001","10001","10001"],
-              "I": ["11111","00100","00100","00100","00100","00100","11111"],
-              "J": ["00111","00010","00010","00010","00010","10010","01100"],
-              "K": ["10001","10010","10100","11000","10100","10010","10001"],
-              "L": ["10000","10000","10000","10000","10000","10000","11111"],
-              "M": ["10001","11011","10101","10101","10001","10001","10001"],
-              "N": ["10001","11001","10101","10011","10001","10001","10001"],
-              "O": ["01110","10001","10001","10001","10001","10001","01110"],
-              "P": ["11110","10001","10001","11110","10000","10000","10000"],
-              "Q": ["01110","10001","10001","10001","10101","10010","01101"],
-              "R": ["11110","10001","10001","11110","10100","10010","10001"],
-              "S": ["01111","10000","10000","01110","00001","00001","11110"],
-              "T": ["11111","00100","00100","00100","00100","00100","00100"],
-              "U": ["10001","10001","10001","10001","10001","10001","01110"],
-              "V": ["10001","10001","10001","10001","10001","01010","00100"],
-              "W": ["10001","10001","10001","10101","10101","11011","10001"],
-              "X": ["10001","10001","01010","00100","01010","10001","10001"],
-              "Y": ["10001","10001","01010","00100","00100","00100","00100"],
-              "Z": ["11111","00001","00010","00100","01000","10000","11111"],
-              "0": ["01110","10001","10011","10101","11001","10001","01110"],
-              "1": ["00100","01100","00100","00100","00100","00100","01110"],
-              "2": ["01110","10001","00001","00010","00100","01000","11111"],
-              "3": ["11110","00001","00001","01110","00001","00001","11110"],
-              "4": ["00010","00110","01010","10010","11111","00010","00010"],
-              "5": ["11111","10000","10000","11110","00001","00001","11110"],
-              "6": ["01110","10000","10000","11110","10001","10001","01110"],
-              "7": ["11111","00001","00010","00100","01000","01000","01000"],
-              "8": ["01110","10001","10001","01110","10001","10001","01110"],
-              "9": ["01110","10001","10001","01111","00001","00001","01110"],
-          }
-
-          glyph = FONT.get(letter, FONT["A"])
-
-          def png_chunk(kind, data):
-              return (
-                  struct.pack(">I", len(data))
-                  + kind
-                  + data
-                  + struct.pack(
-                      ">I",
-                      zlib.crc32(kind + data) & 0xffffffff
-                  )
-              )
-
-          def build_png(size, adaptive=False):
-              pixels = bytearray()
-
-              scale = max(1, int(size / 16))
-
-              glyph_width = 5 * scale
-              glyph_height = 7 * scale
-
-              offset_x = (size - glyph_width) // 2
-              offset_y = (size - glyph_height) // 2
-
-              for y in range(size):
-                  pixels.append(0)
-
-                  for x in range(size):
-
-                      if adaptive:
-                          pr, pg, pb, pa = 0, 0, 0, 0
-                      else:
-                          pr, pg, pb, pa = r, g, b, 255
-
-                      gx = x - offset_x
-                      gy = y - offset_y
-
-                      if (
-                          0 <= gx < glyph_width
-                          and 0 <= gy < glyph_height
-                      ):
-                          cell_x = gx // scale
-                          cell_y = gy // scale
-
-                          if glyph[cell_y][cell_x] == "1":
-                              pr, pg, pb, pa = 255, 255, 255, 255
-
-                      pixels.extend([pr, pg, pb, pa])
-
-              png = b"\x89PNG\r\n\x1a\n"
-
-              png += png_chunk(
-                  b"IHDR",
-                  struct.pack(
-                      ">IIBBBBB",
-                      size,
-                      size,
-                      8,
-                      6,
-                      0,
-                      0,
-                      0
-                  )
-              )
-
-              png += png_chunk(
-                  b"IDAT",
-                  zlib.compress(bytes(pixels), 9)
-              )
-
-              png += png_chunk(b"IEND", b"")
-
-              return png
-
-          base = Path("android/app/src/main/res")
-
-          densities = {
-              "mipmap-mdpi": 48,
-              "mipmap-hdpi": 72,
-              "mipmap-xhdpi": 96,
-              "mipmap-xxhdpi": 144,
-              "mipmap-xxxhdpi": 192,
-          }
-
-          for folder, target_size in densities.items():
-              directory = base / folder
-              directory.mkdir(parents=True, exist_ok=True)
-
-              (directory / "ic_launcher.png").write_bytes(
-                  build_png(target_size, adaptive=False)
-              )
-
-              (directory / "ic_launcher_round.png").write_bytes(
-                  build_png(target_size, adaptive=False)
-              )
-
-          anydpi = base / "mipmap-anydpi-v26"
-          anydpi.mkdir(parents=True, exist_ok=True)
-
-          adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@color/ic_launcher_background"/>
-              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
-              <monochrome android:drawable="@drawable/ic_launcher_foreground"/>
-          </adaptive-icon>
+          export default config;
           """
 
-          (anydpi / "ic_launcher.xml").write_text(
-              adaptive_xml,
-              encoding="utf-8"
-          )
-
-          (anydpi / "ic_launcher_round.xml").write_text(
-              adaptive_xml,
-              encoding="utf-8"
-          )
-
-          drawable = base / "drawable"
-          drawable.mkdir(parents=True, exist_ok=True)
-
-          (drawable / "ic_launcher_foreground.png").write_bytes(
-              build_png(108, adaptive=True)
-          )
-
-          values = base / "values"
-          values.mkdir(parents=True, exist_ok=True)
-
-          legacy_background = values / "ic_launcher_background.xml"
-
-          if legacy_background.exists():
-              legacy_background.unlink()
-              print(
-                  "Ancien fichier ic_launcher_background.xml supprime."
-              )
-
-          values_file = values / "colors.xml"
-
-          existing = ""
-
-          if values_file.exists():
-              existing = values_file.read_text(encoding="utf-8")
-
-          lines = existing.splitlines()
-
-          filtered = [
-              line
-              for line in lines
-              if 'name="ic_launcher_background"' not in line
-          ]
-
-          if not filtered:
-              filtered = [
-                  '<?xml version="1.0" encoding="utf-8"?>',
-                  "<resources>",
-                  "</resources>",
-              ]
-
-          while filtered and filtered[-1].strip() == "":
-              filtered.pop()
-
-          if filtered[-1].strip() != "</resources>":
-              filtered.append("</resources>")
-
-          content = "\n".join(filtered)
-
-          content = content.replace(
-              "</resources>",
-              f'    <color name="ic_launcher_background">#{r:02X}{g:02X}{b:02X}</color>\n'
-              "</resources>"
-          )
-
-          values_file.write_text(
-              content,
-              encoding="utf-8"
-          )
-
-          print("==========================================")
-          print("ICONE PERSONNALISEE GENEREE")
-          print("==========================================")
-          print(f"Application : {app_name}")
-          print(f"Lettre      : {letter}")
-          print(f"Couleur     : #{r:02X}{g:02X}{b:02X}")
-          print("Mode        : adaptatif + monochrome + legacy")
-          print("==========================================")
+          Path("capacitor.config.ts").write_text(config, encoding="utf-8")
+          print(config)
           PY
 
-      - name: Configurer le nom de l'application
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+
+      - name: Configurer l'identité Android
         env:
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
-        shell: bash
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
         run: |
           set -e
 
-          echo "=========================================="
-          echo "CONFIGURATION DU NOM"
-          echo "=========================================="
+          GRADLE_FILE="android/app/build.gradle"
+          test -f "$GRADLE_FILE" || { echo "ERREUR : $GRADLE_FILE introuvable."; exit 1; }
 
-          mkdir -p android/app/src/main/res/values
+          sed -i -E "s/applicationId[[:space:]]+\"[^\"]+\"/applicationId \"$APPLICATION_ID\"/" "$GRADLE_FILE"
 
-          cat > android/app/src/main/res/values/strings.xml <<EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">${APP_NAME}</string>
-          </resources>
-          EOF
+          STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+          APP_NAME="$APP_NAME" APPLICATION_ID="$APPLICATION_ID" python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
 
-          echo "Nom Android configure : $APP_NAME"
+          path = Path("android/app/src/main/res/values/strings.xml")
+          tree = ET.parse(path)
+          root = tree.getroot()
 
-      - name: Configurer le launcher
-        shell: bash
+          values = {
+              "app_name": os.environ["APP_NAME"],
+              "title_activity_main": os.environ["APP_NAME"],
+              "package_name": os.environ["APPLICATION_ID"],
+              "custom_url_scheme": os.environ["APPLICATION_ID"],
+          }
+
+          for key, value in values.items():
+              node = root.find(f"./string[@name='{key}']")
+              if node is None:
+                  node = ET.SubElement(root, "string", {"name": key})
+              node.text = value
+
+          ET.indent(tree, space="    ")
+          tree.write(path, encoding="utf-8", xml_declaration=True)
+          PY
+
+          MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
+          test -f "$MANIFEST_FILE" || { echo "ERREUR : AndroidManifest.xml introuvable."; exit 1; }
+
+          sed -i 's/[[:space:]]android:label="@string\/title_activity_main"//' "$MANIFEST_FILE"
+
+          echo "Application ID : $APPLICATION_ID"
+          echo "Nom Android    : $APP_NAME"
+
+      - name: Préparer ImageMagick
         run: |
           set -e
+          if ! command -v convert >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y imagemagick
+          fi
+          convert -version
 
-          echo "=========================================="
-          echo "CONFIGURATION DU LAUNCHER"
-          echo "=========================================="
+      - name: Générer l'icône Android
+        env:
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          LOGO_BASE64: ${{ github.event.client_payload.logo_base64 }}
+        run: |
+          set -euo pipefail
 
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          RES="android/app/src/main/res"
+          mkdir -p "$RES/drawable-nodpi"
 
-          if [ ! -f "$MANIFEST" ]; then
-            echo "ERREUR : AndroidManifest.xml absent."
-            exit 1
+          # Supprime les anciens fichiers adaptatifs afin qu'Android utilise
+          # directement les PNG générés dans les dossiers mipmap-*.
+          rm -f "$RES/mipmap-anydpi-v26/ic_launcher.xml"
+          rm -f "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
+          rm -f "$RES/drawable-v24/ic_launcher_foreground.xml"
+          rm -f "$RES/drawable-nodpi/ic_launcher_foreground.png"
+
+          ICON_SOURCE=""
+
+          if [ -n "${LOGO_BASE64:-}" ] && [ "${LOGO_BASE64:-}" != "null" ]; then
+            echo "Logo sélectionné reçu depuis SimiRork."
+
+            printf '%s' "$LOGO_BASE64" | base64 --decode > selected-logo.bin
+            test -s selected-logo.bin || { echo "ERREUR : logo décodé vide."; exit 1; }
+
+            # ImageMagick détecte automatiquement PNG, JPEG ou WebP à partir du contenu.
+            identify selected-logo.bin >/dev/null 2>&1 || {
+              echo "ERREUR : le logo reçu n'est pas une image valide.";
+              exit 1;
+            }
+
+            # Normalise le logo vers un PNG carré 512x512.
+            # La version envoyée par page.tsx est déjà allégée ; cette étape garantit
+            # un format Android stable sans modifier le logo original enregistré.
+            convert selected-logo.bin \
+              -auto-orient \
+              -resize '512x512^' \
+              -gravity center \
+              -extent 512x512 \
+              -strip \
+              PNG32:generated-app-icon.png
+
+            ICON_SOURCE="generated-app-icon.png"
+            echo "Icône personnalisée préparée depuis le logo sélectionné."
+          else
+            echo "Aucun logo sélectionné reçu. Génération de l'icône de secours."
+
+            APP_NAME="$APP_NAME" python3 - <<'PY'
+            import hashlib
+            import html
+            import os
+            import re
+            import unicodedata
+            from pathlib import Path
+
+            app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
+            normalized = unicodedata.normalize("NFKD", app_name)
+            ascii_name = "".join(c for c in normalized if not unicodedata.combining(c))
+            letters = re.findall(r"[A-Za-z]", ascii_name.upper())
+            initials = "".join(letters[:2]) or "SR"
+            initials = initials[:2]
+
+            palettes = [
+                ("#2563EB", "#93C5FD"),
+                ("#7C3AED", "#C4B5FD"),
+                ("#059669", "#6EE7B7"),
+                ("#DB2777", "#F9A8D4"),
+                ("#EA580C", "#FDBA74"),
+                ("#0891B2", "#67E8F9"),
+                ("#4F46E5", "#A5B4FC"),
+                ("#CA8A04", "#FDE68A"),
+                ("#DC2626", "#FCA5A5"),
+                ("#0F766E", "#99F6E4"),
+            ]
+
+            digest = hashlib.sha256(app_name.encode("utf-8")).hexdigest()
+            background, accent = palettes[int(digest[:8], 16) % len(palettes)]
+            safe_initials = html.escape(initials)
+
+            svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+              <rect width="1024" height="1024" rx="190" fill="{background}"/>
+              <circle cx="512" cy="512" r="330" fill="#FFFFFF" opacity="0.08"/>
+              <rect x="760" y="150" width="86" height="86" rx="26" fill="{accent}"/>
+              <text x="512" y="625" text-anchor="middle" font-family="DejaVu Sans" font-size="340" font-weight="700" fill="#FFFFFF">{safe_initials}</text>
+            </svg>'''
+
+            Path("generated-app-icon.svg").write_text(svg, encoding="utf-8")
+            print(f"Icône de secours : {initials}")
+            PY
+
+            convert generated-app-icon.svg \
+              -resize 512x512 \
+              -strip \
+              PNG32:generated-app-icon.png
+
+            ICON_SOURCE="generated-app-icon.png"
           fi
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          test -s "$ICON_SOURCE" || { echo "ERREUR : source d'icône absente."; exit 1; }
 
-          path = Path("android/app/src/main/AndroidManifest.xml")
-          text = path.read_text(encoding="utf-8")
+          declare -A ICON_SIZES=(
+            [mdpi]=48
+            [hdpi]=72
+            [xhdpi]=96
+            [xxhdpi]=144
+            [xxxhdpi]=192
+          )
 
-          if 'android:icon=' in text:
-              text = re.sub(
-                  r'android:icon="[^"]+"',
-                  'android:icon="@mipmap/ic_launcher"',
-                  text
-              )
-          else:
-              text = text.replace(
-                  "<application",
-                  '<application android:icon="@mipmap/ic_launcher"',
-                  1
-              )
+          for density in "${!ICON_SIZES[@]}"; do
+            size="${ICON_SIZES[$density]}"
+            out="$RES/mipmap-${density}"
+            mkdir -p "$out"
 
-          if 'android:roundIcon=' in text:
-              text = re.sub(
-                  r'android:roundIcon="[^"]+"',
-                  'android:roundIcon="@mipmap/ic_launcher_round"',
-                  text
-              )
-          else:
-              text = text.replace(
-                  "<application",
-                  '<application android:roundIcon="@mipmap/ic_launcher_round"',
-                  1
-              )
+            convert "$ICON_SOURCE" \
+              -resize "${size}x${size}" \
+              -strip \
+              "$out/ic_launcher.png"
 
-          path.write_text(text, encoding="utf-8")
-          PY
+            convert "$ICON_SOURCE" \
+              -resize "${size}x${size}" \
+              -strip \
+              "$out/ic_launcher_round.png"
+          done
 
-          echo "Launcher configure."
+          echo "=========================================="
+          echo "ICÔNES ANDROID GÉNÉRÉES"
+          echo "=========================================="
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            ls -lh "$RES/mipmap-${density}/ic_launcher.png"
+          done
 
-      - name: Verifier la configuration finale
+      - name: Vérifier la configuration finale
         env:
-          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
-          APP_NAME: ${{ steps.identity.outputs.app_name }}
-          PROJECT_ID: ${{ steps.identity.outputs.project_id }}
-        shell: bash
+          APP_NAME: ${{ steps.app_info.outputs.app_name }}
+          APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
+          LOGO_BASE64: ${{ github.event.client_payload.logo_base64 }}
         run: |
           set -e
 
           echo "=========================================="
-          echo "CONFIGURATION FINALE"
+          echo "IDENTITÉ APK"
           echo "=========================================="
-
           echo "Nom            : $APP_NAME"
-          echo "Project ID     : $PROJECT_ID"
           echo "Application ID : $APPLICATION_ID"
 
-          echo ""
-          echo "Manifest :"
-
-          grep -n "manifest" android/app/src/main/AndroidManifest.xml || true
-          grep -n "application" android/app/src/main/AndroidManifest.xml || true
-
-          echo ""
-          echo "Gradle :"
-
-          if [ -f "android/app/build.gradle" ]; then
-            grep -n "applicationId" android/app/build.gradle || true
+          if [ -n "${LOGO_BASE64:-}" ] && [ "${LOGO_BASE64:-}" != "null" ]; then
+            echo "Icône           : logo sélectionné SimiRork"
+          else
+            echo "Icône           : icône automatique de secours"
           fi
 
-          if [ -f "android/app/build.gradle.kts" ]; then
-            grep -n "applicationId" android/app/build.gradle.kts || true
-          fi
-
-          echo ""
-          echo "Icones :"
-
-          find android/app/src/main/res \
-            \( -name "ic_launcher*" -o -name "*launcher*" \) \
-            -type f \
-            -print
-
-          echo ""
-          echo "Ressource couleur launcher :"
-
-          grep -R -n \
-            "ic_launcher_background" \
-            android/app/src/main/res/values \
-            2>/dev/null || true
-
-          echo ""
-          echo "Capacitor config :"
-
-          if [ ! -f "android/app/src/main/assets/capacitor.config.json" ]; then
-            echo "ERREUR : capacitor.config.json absent."
-            exit 1
-          fi
-
-          cat android/app/src/main/assets/capacitor.config.json
-
-          echo ""
-          echo "HTML embarque :"
-
-          if [ ! -f "android/app/src/main/assets/public/index.html" ]; then
-            echo "ERREUR : index.html embarque absent."
-            exit 1
-          fi
-
-          ls -lh android/app/src/main/assets/public/index.html
-
-          echo ""
-          echo "Verification absence URL SimiRork :"
-
-          if grep -n "https://simirork.vercel.app" \
-            android/app/src/main/assets/capacitor.config.json; then
-
-            echo "ERREUR : l'URL SimiRork est toujours presente."
-            exit 1
-          fi
-
-          echo "URL SimiRork absente de la configuration APK."
-
-          echo ""
-          echo "Verification applicationId :"
-
-          APPLICATION_ID_FOUND=false
-
-          if [ -f "android/app/build.gradle" ]; then
-            if grep -F -q "$APPLICATION_ID" android/app/build.gradle; then
-              APPLICATION_ID_FOUND=true
-              echo "Application ID trouvee dans build.gradle."
-            fi
-          fi
-
-          if [ -f "android/app/build.gradle.kts" ]; then
-            if grep -F -q "$APPLICATION_ID" android/app/build.gradle.kts; then
-              APPLICATION_ID_FOUND=true
-              echo "Application ID trouvee dans build.gradle.kts."
-            fi
-          fi
-
-          if [ "$APPLICATION_ID_FOUND" != "true" ]; then
-            echo "ERREUR : Application ID non trouvee dans la configuration Android."
-            exit 1
-          fi
-
-          echo "Application ID verifiee."
-
-          echo ""
-          echo "Verification de l'icone adaptive :"
-
-          if [ ! -f "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml" ]; then
-            echo "ERREUR : ic_launcher.xml absent."
-            exit 1
-          fi
-
-          if [ ! -f "android/app/src/main/res/drawable/ic_launcher_foreground.png" ]; then
-            echo "ERREUR : ic_launcher_foreground.png absent."
-            exit 1
-          fi
-
-          if [ ! -f "android/app/src/main/res/values/colors.xml" ]; then
-            echo "ERREUR : colors.xml absent."
-            exit 1
-          fi
-
-          echo "Icone adaptive presente."
-
-          echo ""
-          echo "Verification du dossier Cordova :"
-
-          if [ ! -f "android/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-            echo "ERREUR : cordova.variables.gradle absent."
-            exit 1
-          fi
-
-          ls -lh android/capacitor-cordova-android-plugins/cordova.variables.gradle
-
-          echo ""
           echo "=========================================="
-          echo "CONFIGURATION FINALE VALIDE"
-          echo "=========================================="
+
+          grep -n "applicationId" android/app/build.gradle
+          grep -n 'name="app_name"' android/app/src/main/res/values/strings.xml
+          grep -n 'android:label' android/app/src/main/AndroidManifest.xml || true
+
+          test -s public/index.html
+          test -s android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          test -s android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          test -s android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          test -s android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          test -s android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          test -s android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+          test -s android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          test -s android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          test -s android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          test -s android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+          test ! -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          test ! -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          test ! -f android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+
+          echo "Vérification OK."
+
+      - name: Préparer Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Rendre Gradle exécutable
+        run: chmod +x android/gradlew
 
       - name: Construire l'APK
         working-directory: android
-        shell: bash
-        run: |
-          set -e
+        run: ./gradlew assembleDebug --no-daemon
 
-          echo "=========================================="
-          echo "CONSTRUCTION APK"
-          echo "=========================================="
-
-          chmod +x gradlew
-
-          ./gradlew clean assembleDebug --no-daemon
-
-      - name: Renommer l'APK
+      - name: Préparer le fichier APK final
         env:
-          SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
-        shell: bash
+          APK_FILENAME: ${{ steps.app_info.outputs.apk_filename }}
         run: |
           set -e
-
-          echo "=========================================="
-          echo "RENOMMAGE APK"
-          echo "=========================================="
-
-          APK=$(find android/app/build/outputs/apk/debug \
-            -maxdepth 1 \
-            -type f \
-            -name "*.apk" \
-            ! -name "${SAFE_NAME}.apk" \
-            | head -n 1)
-
-          if [ -z "$APK" ]; then
-            echo "ERREUR : aucun APK source trouve."
-            exit 1
-          fi
-
-          OUTPUT_DIR="android/app/build/outputs/apk/debug"
-          FINAL_APK="$OUTPUT_DIR/${SAFE_NAME}.apk"
-
-          cp "$APK" "$FINAL_APK"
-
-          echo "APK source : $APK"
-          echo "APK final  : $FINAL_APK"
-
-      - name: Verifier l'identite reelle de l'APK
-        env:
-          APPLICATION_ID: ${{ steps.identity.outputs.application_id }}
-          SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "VERIFICATION DE L'IDENTITE REELLE APK"
-          echo "=========================================="
-
-          APK="android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERREUR : APK final introuvable."
-            echo "APK attendu : $APK"
-            exit 1
-          fi
-
-          echo "APK : $APK"
-          echo "Application ID attendu : $APPLICATION_ID"
-
-          echo ""
-          echo "Recherche de aapt..."
-
-          AAPT=$(find "$ANDROID_HOME/build-tools" \
-            -type f \
-            -name "aapt" \
-            | sort -V \
-            | tail -n 1)
-
-          if [ -z "$AAPT" ]; then
-            echo "ERREUR : outil aapt introuvable."
-            echo ""
-            echo "Build-tools disponibles :"
-
-            find "$ANDROID_HOME/build-tools" \
-              -maxdepth 2 \
-              -type f \
-              -name "aapt" \
-              -print 2>/dev/null || true
-
-            exit 1
-          fi
-
-          # NE PAS utiliser chmod ici.
-          # Les outils Android GitHub Actions sont deja executables.
-          echo "aapt : $AAPT"
-
-          echo ""
-          echo "Lecture du package Android reel..."
-
-          PACKAGE_NAME=$(
-            "$AAPT" dump badging "$APK" \
-              | sed -n "s/^package: name='\([^']*\)'.*/\1/p" \
-              | head -n 1
-          )
-
-          if [ -z "$PACKAGE_NAME" ]; then
-            echo "ERREUR : impossible de lire le package Android de l'APK."
-            exit 1
-          fi
-
-          echo "Package reel APK : $PACKAGE_NAME"
-          echo "Package attendu  : $APPLICATION_ID"
-
-          echo ""
-
-          if [ "$PACKAGE_NAME" != "$APPLICATION_ID" ]; then
-            echo "=========================================="
-            echo "ERREUR CRITIQUE : PACKAGE ANDROID INCORRECT"
-            echo "=========================================="
-            echo "Attendu : $APPLICATION_ID"
-            echo "Reel    : $PACKAGE_NAME"
-            echo ""
-            echo "L'APK ne pourra pas etre considere comme une"
-            echo "application Android distincte."
-            exit 1
-          fi
-
-          echo "=========================================="
-          echo "PACKAGE ANDROID VALIDE"
-          echo "=========================================="
-          echo "L'APK possede bien l'identite :"
-          echo "$APPLICATION_ID"
-          echo "=========================================="
-
-      - name: Verifier l'APK
-        env:
-          SAFE_NAME: ${{ steps.identity.outputs.safe_name }}
-        shell: bash
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "VERIFICATION APK"
-          echo "=========================================="
-
-          APK="android/app/build/outputs/apk/debug/${SAFE_NAME}.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERREUR : APK introuvable."
-            exit 1
-          fi
-
-          SIZE=$(stat -c%s "$APK")
-
-          if [ "$SIZE" -lt 100000 ]; then
-            echo "ERREUR : APK anormalement petit."
-            exit 1
-          fi
-
-          echo "APK : $APK"
-          echo "Taille : $SIZE octets"
-          echo "APK valide."
+          mkdir -p generated-apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "generated-apk/$APK_FILENAME"
+          ls -lh generated-apk/
 
       - name: Publier l'APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: apk-${{ steps.identity.outputs.safe_name }}
-          path: android/app/build/outputs/apk/debug/${{ steps.identity.outputs.safe_name }}.apk
+          name: ${{ steps.app_info.outputs.apk_filename }}
+          path: generated-apk/*.apk
           if-no-files-found: error
-          retention-days: 7

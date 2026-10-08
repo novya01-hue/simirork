@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -7,6 +7,21 @@ type ApkStatus =
   | 'building'
   | 'ready'
   | 'error';
+
+type LogoProposal = {
+  id: number;
+  mediaType: string;
+  base64: string;
+  image: string;
+};
+
+type SavedLogo = {
+  id: number;
+  image: string;
+  mediaType?: string;
+  model?: string;
+  selectedAt?: string;
+};
 
 type Project = {
   id: string;
@@ -19,6 +34,7 @@ type Project = {
   apkStatus?: ApkStatus;
   apkRunId?: string | null;
   apkError?: string;
+  logo?: string | null;
 };
 
 type CreditState = {
@@ -58,6 +74,199 @@ function normalizeProject(project: Project): Project {
     apkRunId: project.apkRunId || null,
     apkError: project.apkError || '',
   };
+}
+
+
+function parseSavedLogo(
+  value?: string | null
+): SavedLogo | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.image !== 'string' ||
+      !parsed.image.startsWith('data:image/')
+    ) {
+      return null;
+    }
+
+    return {
+      id:
+        Number(parsed.id) || 1,
+      image:
+        parsed.image,
+      mediaType:
+        typeof parsed.mediaType === 'string'
+          ? parsed.mediaType
+          : undefined,
+      model:
+        typeof parsed.model === 'string'
+          ? parsed.model
+          : undefined,
+      selectedAt:
+        typeof parsed.selectedAt === 'string'
+          ? parsed.selectedAt
+          : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getProjectLogoImage(
+  project?: Project | null
+): string {
+  return parseSavedLogo(
+    project?.logo
+  )?.image || '';
+}
+
+
+const MAX_APK_LOGO_DATA_URL_LENGTH = 12000;
+
+async function prepareLogoForApk(
+  source: string
+): Promise<string> {
+  if (!source.startsWith('data:image/')) {
+    throw new Error(
+      'Le logo sélectionné est invalide.'
+    );
+  }
+
+  const image =
+    await new Promise<HTMLImageElement>(
+      (resolve, reject) => {
+        const element =
+          new Image();
+
+        element.onload = () =>
+          resolve(element);
+
+        element.onerror = () =>
+          reject(
+            new Error(
+              'Impossible de charger le logo sélectionné.'
+            )
+          );
+
+        element.src = source;
+      }
+    );
+
+  const dimensions = [
+    256,
+    192,
+    160,
+    128,
+  ];
+
+  const qualities = [
+    0.82,
+    0.72,
+    0.62,
+    0.52,
+    0.42,
+  ];
+
+  let smallestResult = '';
+
+  for (const size of dimensions) {
+    const canvas =
+      document.createElement(
+        'canvas'
+      );
+
+    canvas.width = size;
+    canvas.height = size;
+
+    const context =
+      canvas.getContext('2d');
+
+    if (!context) {
+      throw new Error(
+        'Impossible de préparer le logo pour Android.'
+      );
+    }
+
+    context.clearRect(
+      0,
+      0,
+      size,
+      size
+    );
+
+    const scale = Math.min(
+      size / image.naturalWidth,
+      size / image.naturalHeight
+    );
+
+    const width =
+      image.naturalWidth * scale;
+
+    const height =
+      image.naturalHeight * scale;
+
+    const x =
+      (size - width) / 2;
+
+    const y =
+      (size - height) / 2;
+
+    context.drawImage(
+      image,
+      x,
+      y,
+      width,
+      height
+    );
+
+    for (const quality of qualities) {
+      const webp =
+        canvas.toDataURL(
+          'image/webp',
+          quality
+        );
+
+      const candidate =
+        webp.startsWith(
+          'data:image/webp'
+        )
+          ? webp
+          : canvas.toDataURL(
+              'image/png'
+            );
+
+      if (
+        !smallestResult ||
+        candidate.length <
+          smallestResult.length
+      ) {
+        smallestResult =
+          candidate;
+      }
+
+      if (
+        candidate.length <=
+        MAX_APK_LOGO_DATA_URL_LENGTH
+      ) {
+        return candidate;
+      }
+    }
+  }
+
+  if (!smallestResult) {
+    throw new Error(
+      'Impossible de compresser le logo.'
+    );
+  }
+
+  return smallestResult;
 }
 
 function createSafeFileBaseName(name: string): string {
@@ -188,6 +397,18 @@ export default function Home() {
 
   const [loading, setLoading] =
     useState(false);
+
+  const [logoLoading, setLogoLoading] =
+    useState(false);
+
+  const [logoProposals, setLogoProposals] =
+    useState<LogoProposal[]>([]);
+
+  const [logoError, setLogoError] =
+    useState('');
+
+  const [lastLogoCost, setLastLogoCost] =
+    useState<number | null>(null);
 
   const [modelVersion, setModelVersion] =
     useState(
@@ -573,6 +794,9 @@ export default function Home() {
                 apkError:
                   project.apkError ||
                   '',
+                logo:
+                  project.logo ??
+                  null,
               }),
             }
           );
@@ -1022,6 +1246,9 @@ export default function Home() {
       setShowNewProject(false);
       setActiveTab('prompt');
       setLastUsage(null);
+      setLogoProposals([]);
+      setLogoError('');
+      setLastLogoCost(null);
     };
 
   const handleOpenProject =
@@ -1106,6 +1333,10 @@ export default function Home() {
       setLastUsage(
         projectUsage
       );
+
+      setLogoProposals([]);
+      setLogoError('');
+      setLastLogoCost(null);
     };
 
   const handleBackToProjects =
@@ -1115,6 +1346,9 @@ export default function Home() {
       setGeneratedCode('');
       setActiveTab('prompt');
       setLastUsage(null);
+      setLogoProposals([]);
+      setLogoError('');
+      setLastLogoCost(null);
       void fetchProjects();
     };
 
@@ -1162,6 +1396,9 @@ export default function Home() {
         setGeneratedCode('');
         setActiveTab('prompt');
         setLastUsage(null);
+        setLogoProposals([]);
+        setLogoError('');
+        setLastLogoCost(null);
       }
     };
 
@@ -1287,6 +1524,192 @@ export default function Home() {
       URL.revokeObjectURL(url);
     };
 
+  const handleGenerateLogos =
+    async () => {
+      if (
+        !currentProject ||
+        logoLoading
+      ) {
+        return;
+      }
+
+      if (!currentProject.code) {
+        alert(
+          "Générez d'abord votre application avant de créer son logo."
+        );
+        return;
+      }
+
+      setLogoLoading(true);
+      setLogoError('');
+      setLastLogoCost(null);
+
+      try {
+        const response =
+          await fetch(
+            '/api/generate-logo',
+            {
+              method: 'POST',
+              credentials:
+                'same-origin',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body: JSON.stringify({
+                projectId:
+                  currentProject.id,
+                projectName:
+                  currentProject.name,
+                description:
+                  currentProject.description,
+                prompt:
+                  currentProject.prompt,
+              }),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success ||
+          !Array.isArray(
+            data.logos
+          )
+        ) {
+          throw new Error(
+            data?.error ||
+              'Impossible de générer les logos.'
+          );
+        }
+
+        const proposals: LogoProposal[] =
+          data.logos
+            .map(
+              (
+                logo: Partial<LogoProposal>,
+                index: number
+              ) => ({
+                id:
+                  Number(
+                    logo.id
+                  ) ||
+                  index + 1,
+                mediaType:
+                  typeof logo.mediaType ===
+                  'string'
+                    ? logo.mediaType
+                    : 'image/png',
+                base64:
+                  typeof logo.base64 ===
+                  'string'
+                    ? logo.base64
+                    : '',
+                image:
+                  typeof logo.image ===
+                  'string'
+                    ? logo.image
+                    : '',
+              })
+            )
+            .filter(
+              (logo: LogoProposal) =>
+                logo.image.startsWith(
+                  'data:image/'
+                )
+            );
+
+        if (
+          proposals.length !== 3
+        ) {
+          throw new Error(
+            `SimiRork a reçu ${proposals.length} logo(s) au lieu de 3.`
+          );
+        }
+
+        setLogoProposals(
+          proposals
+        );
+
+        const cost =
+          Number(
+            data?.usage?.cost
+          );
+
+        setLastLogoCost(
+          Number.isFinite(cost) &&
+          cost > 0
+            ? cost
+            : null
+        );
+      } catch (error) {
+        console.error(
+          'Erreur génération logos :',
+          error
+        );
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Erreur pendant la génération des logos.';
+
+        setLogoError(message);
+        alert(message);
+      } finally {
+        setLogoLoading(false);
+      }
+    };
+
+  const handleSelectLogo =
+    async (
+      proposal: LogoProposal
+    ) => {
+      if (!currentProject) {
+        return;
+      }
+
+      const savedLogo: SavedLogo = {
+        id: proposal.id,
+        image: proposal.image,
+        mediaType:
+          proposal.mediaType,
+        model:
+          'bytedance-seed/seedream-4.5',
+        selectedAt:
+          new Date().toISOString(),
+      };
+
+      const saved =
+        await updateProject(
+          currentProject.id,
+          {
+            logo:
+              JSON.stringify(
+                savedLogo
+              ),
+            apkStatus:
+              'none',
+            apkRunId:
+              null,
+            apkError:
+              '',
+          }
+        );
+
+      if (!saved) {
+        alert(
+          "Impossible d'enregistrer le logo choisi."
+        );
+        return;
+      }
+
+      alert(
+        `Logo ${proposal.id} enregistré pour ${currentProject.name}.`
+      );
+    };
+
   const handleBuildAPK =
     async (
       project: Project
@@ -1313,6 +1736,47 @@ export default function Home() {
         )
       ) {
         return;
+      }
+
+      const sourceLogo =
+        getProjectLogoImage(
+          project
+        );
+
+      let logoForApk:
+        | string
+        | null = null;
+
+      if (sourceLogo) {
+        try {
+          logoForApk =
+            await prepareLogoForApk(
+              sourceLogo
+            );
+
+          console.log(
+            'Logo APK préparé :',
+            {
+              originalCharacters:
+                sourceLogo.length,
+              compressedCharacters:
+                logoForApk.length,
+            }
+          );
+        } catch (error) {
+          console.error(
+            'Erreur préparation logo APK :',
+            error
+          );
+
+          alert(
+            error instanceof Error
+              ? error.message
+              : 'Impossible de préparer le logo pour l’APK.'
+          );
+
+          return;
+        }
       }
 
       const markedBuilding =
@@ -1351,6 +1815,8 @@ export default function Home() {
                   project.name,
                 projectId:
                   project.id,
+                logo:
+                  logoForApk,
               }),
             }
           );
@@ -1904,8 +2370,22 @@ export default function Home() {
                           </p>
                         </div>
 
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10">
-                          📱
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white/10">
+                          {getProjectLogoImage(
+                            project
+                          ) ? (
+                            <img
+                              src={getProjectLogoImage(
+                                project
+                              )}
+                              alt={`Logo ${project.name}`}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <span>
+                              📱
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -2379,6 +2859,135 @@ export default function Home() {
             </>
           )}
         </div>
+
+        {generatedCode && (
+          <section className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-semibold">
+                  Logo de l'application
+                </h2>
+
+                <p className="mt-1 text-xs text-white/40">
+                  Générez trois propositions puis choisissez celle qui sera enregistrée pour cette application.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  logoLoading
+                }
+                onClick={
+                  handleGenerateLogos
+                }
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {logoLoading
+                  ? '🎨 Génération des 3 logos...'
+                  : logoProposals.length
+                    ? '🎨 Générer 3 nouveaux logos'
+                    : '🎨 Générer 3 logos'}
+              </button>
+            </div>
+
+            {logoError && (
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                {logoError}
+              </div>
+            )}
+
+            {getProjectLogoImage(
+              currentProject
+            ) && (
+              <div className="mt-5 flex flex-col gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 sm:flex-row sm:items-center">
+                <img
+                  src={getProjectLogoImage(
+                    currentProject
+                  )}
+                  alt={`Logo sélectionné pour ${currentProject.name}`}
+                  className="h-20 w-20 rounded-2xl object-cover"
+                />
+
+                <div>
+                  <div className="text-sm font-semibold text-emerald-300">
+                    ✓ Logo sélectionné
+                  </div>
+
+                  <div className="mt-1 text-xs text-white/45">
+                    Ce logo est enregistré avec l'application.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {logoProposals.length >
+              0 && (
+              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {logoProposals.map(
+                  (logo) => {
+                    const selected =
+                      getProjectLogoImage(
+                        currentProject
+                      ) ===
+                      logo.image;
+
+                    return (
+                      <button
+                        key={logo.id}
+                        type="button"
+                        onClick={() =>
+                          void handleSelectLogo(
+                            logo
+                          )
+                        }
+                        className={`group overflow-hidden rounded-2xl border p-3 text-left transition ${
+                          selected
+                            ? 'border-emerald-400/70 bg-emerald-500/10'
+                            : 'border-white/10 bg-black/20 hover:border-white/30'
+                        }`}
+                      >
+                        <img
+                          src={logo.image}
+                          alt={`Proposition de logo ${logo.id}`}
+                          className="aspect-square w-full rounded-xl object-cover"
+                        />
+
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">
+                            Logo {logo.id}
+                          </span>
+
+                          <span
+                            className={
+                              selected
+                                ? 'text-xs text-emerald-300'
+                                : 'text-xs text-white/40'
+                            }
+                          >
+                            {selected
+                              ? '✓ Sélectionné'
+                              : 'Choisir'}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            )}
+
+            {lastLogoCost !==
+              null && (
+              <div className="mt-4 text-xs text-white/40">
+                Coût OpenRouter des 3 propositions :{' '}
+                {formatCost(
+                  lastLogoCost
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         {activeTab === 'prompt' ? (
           <section className="mt-5 grid flex-1 grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
