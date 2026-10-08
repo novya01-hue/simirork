@@ -223,48 +223,48 @@ jobs:
           else
             echo "Aucun logo sélectionné reçu. Génération de l'icône de secours."
 
-            APP_NAME="$APP_NAME" python3 - <<'PY'
-            import hashlib
-            import html
-            import os
-            import re
-            import unicodedata
-            from pathlib import Path
+          APP_NAME="$APP_NAME" python3 - <<'PY'
+          import hashlib
+          import html
+          import os
+          import re
+          import unicodedata
+          from pathlib import Path
 
-            app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
-            normalized = unicodedata.normalize("NFKD", app_name)
-            ascii_name = "".join(c for c in normalized if not unicodedata.combining(c))
-            letters = re.findall(r"[A-Za-z]", ascii_name.upper())
-            initials = "".join(letters[:2]) or "SR"
-            initials = initials[:2]
+          app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
+          normalized = unicodedata.normalize("NFKD", app_name)
+          ascii_name = "".join(c for c in normalized if not unicodedata.combining(c))
+          letters = re.findall(r"[A-Za-z]", ascii_name.upper())
+          initials = "".join(letters[:2]) or "SR"
+          initials = initials[:2]
 
-            palettes = [
-                ("#2563EB", "#93C5FD"),
-                ("#7C3AED", "#C4B5FD"),
-                ("#059669", "#6EE7B7"),
-                ("#DB2777", "#F9A8D4"),
-                ("#EA580C", "#FDBA74"),
-                ("#0891B2", "#67E8F9"),
-                ("#4F46E5", "#A5B4FC"),
-                ("#CA8A04", "#FDE68A"),
-                ("#DC2626", "#FCA5A5"),
-                ("#0F766E", "#99F6E4"),
-            ]
+          palettes = [
+              ("#2563EB", "#93C5FD"),
+              ("#7C3AED", "#C4B5FD"),
+              ("#059669", "#6EE7B7"),
+              ("#DB2777", "#F9A8D4"),
+              ("#EA580C", "#FDBA74"),
+              ("#0891B2", "#67E8F9"),
+              ("#4F46E5", "#A5B4FC"),
+              ("#CA8A04", "#FDE68A"),
+              ("#DC2626", "#FCA5A5"),
+              ("#0F766E", "#99F6E4"),
+          ]
 
-            digest = hashlib.sha256(app_name.encode("utf-8")).hexdigest()
-            background, accent = palettes[int(digest[:8], 16) % len(palettes)]
-            safe_initials = html.escape(initials)
+          digest = hashlib.sha256(app_name.encode("utf-8")).hexdigest()
+          background, accent = palettes[int(digest[:8], 16) % len(palettes)]
+          safe_initials = html.escape(initials)
 
-            svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-              <rect width="1024" height="1024" rx="190" fill="{background}"/>
-              <circle cx="512" cy="512" r="330" fill="#FFFFFF" opacity="0.08"/>
-              <rect x="760" y="150" width="86" height="86" rx="26" fill="{accent}"/>
-              <text x="512" y="625" text-anchor="middle" font-family="DejaVu Sans" font-size="340" font-weight="700" fill="#FFFFFF">{safe_initials}</text>
-            </svg>'''
+          svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+            <rect width="1024" height="1024" rx="190" fill="{background}"/>
+            <circle cx="512" cy="512" r="330" fill="#FFFFFF" opacity="0.08"/>
+            <rect x="760" y="150" width="86" height="86" rx="26" fill="{accent}"/>
+            <text x="512" y="625" text-anchor="middle" font-family="DejaVu Sans" font-size="340" font-weight="700" fill="#FFFFFF">{safe_initials}</text>
+          </svg>'''
 
-            Path("generated-app-icon.svg").write_text(svg, encoding="utf-8")
-            print(f"Icône de secours : {initials}")
-            PY
+          Path("generated-app-icon.svg").write_text(svg, encoding="utf-8")
+          print(f"Icône de secours : {initials}")
+          PY
 
             convert generated-app-icon.svg \
               -resize 512x512 \
