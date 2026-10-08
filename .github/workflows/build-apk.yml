@@ -1,5 +1,7 @@
 name: Build APK Android
 
+run-name: APK ${{ github.event.client_payload.build_request_id }} - ${{ github.event.client_payload.app_name }}
+
 on:
   workflow_dispatch:
 
@@ -32,11 +34,14 @@ jobs:
 
           PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
           [ -n "$PACKAGE_SLUG" ] || PACKAGE_SLUG="app"
+
           FIRST_CHAR=$(printf '%s' "$PACKAGE_SLUG" | cut -c1)
+
           case "$FIRST_CHAR" in
             [a-z]) ;;
             *) PACKAGE_SLUG="app${PACKAGE_SLUG}" ;;
           esac
+
           PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
           HASH_VALUE=$(printf '%s' "$APP_NAME" | sha256sum | cut -c1-8)
@@ -58,10 +63,22 @@ jobs:
           HTML_BASE64: ${{ github.event.client_payload.html_base64 }}
         run: |
           set -e
-          [ -n "$HTML_BASE64" ] || { echo "ERREUR : aucun HTML reçu."; exit 1; }
+
+          [ -n "$HTML_BASE64" ] || {
+            echo "ERREUR : aucun HTML reçu."
+            exit 1
+          }
+
           mkdir -p public
-          printf '%s' "$HTML_BASE64" | base64 --decode > public/index.html
-          test -s public/index.html || { echo "ERREUR : public/index.html est vide."; exit 1; }
+
+          printf '%s' "$HTML_BASE64" |
+            base64 --decode > public/index.html
+
+          test -s public/index.html || {
+            echo "ERREUR : public/index.html est vide."
+            exit 1
+          }
+
           echo "HTML injecté : $(wc -c < public/index.html) octets"
 
       - name: Installer Node.js
@@ -113,7 +130,11 @@ jobs:
           export default config;
           """
 
-          Path("capacitor.config.ts").write_text(config, encoding="utf-8")
+          Path("capacitor.config.ts").write_text(
+              config,
+              encoding="utf-8"
+          )
+
           print(config)
           PY
 
@@ -128,17 +149,27 @@ jobs:
           set -e
 
           GRADLE_FILE="android/app/build.gradle"
-          test -f "$GRADLE_FILE" || { echo "ERREUR : $GRADLE_FILE introuvable."; exit 1; }
 
-          sed -i -E "s/applicationId[[:space:]]+\"[^\"]+\"/applicationId \"$APPLICATION_ID\"/" "$GRADLE_FILE"
+          test -f "$GRADLE_FILE" || {
+            echo "ERREUR : $GRADLE_FILE introuvable."
+            exit 1
+          }
+
+          sed -i -E \
+            "s/applicationId[[:space:]]+\"[^\"]+\"/applicationId \"$APPLICATION_ID\"/" \
+            "$GRADLE_FILE"
 
           STRINGS_FILE="android/app/src/main/res/values/strings.xml"
+
           APP_NAME="$APP_NAME" APPLICATION_ID="$APPLICATION_ID" python3 - <<'PY'
           import os
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          path = Path("android/app/src/main/res/values/strings.xml")
+          path = Path(
+              "android/app/src/main/res/values/strings.xml"
+          )
+
           tree = ET.parse(path)
           root = tree.getroot()
 
@@ -150,19 +181,41 @@ jobs:
           }
 
           for key, value in values.items():
-              node = root.find(f"./string[@name='{key}']")
+              node = root.find(
+                  f"./string[@name='{key}']"
+              )
+
               if node is None:
-                  node = ET.SubElement(root, "string", {"name": key})
+                  node = ET.SubElement(
+                      root,
+                      "string",
+                      {"name": key}
+                  )
+
               node.text = value
 
-          ET.indent(tree, space="    ")
-          tree.write(path, encoding="utf-8", xml_declaration=True)
+          ET.indent(
+              tree,
+              space="    "
+          )
+
+          tree.write(
+              path,
+              encoding="utf-8",
+              xml_declaration=True
+          )
           PY
 
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
-          test -f "$MANIFEST_FILE" || { echo "ERREUR : AndroidManifest.xml introuvable."; exit 1; }
 
-          sed -i 's/[[:space:]]android:label="@string\/title_activity_main"//' "$MANIFEST_FILE"
+          test -f "$MANIFEST_FILE" || {
+            echo "ERREUR : AndroidManifest.xml introuvable."
+            exit 1
+          }
+
+          sed -i \
+            's/[[:space:]]android:label="@string\/title_activity_main"//' \
+            "$MANIFEST_FILE"
 
           echo "Application ID : $APPLICATION_ID"
           echo "Nom Android    : $APP_NAME"
@@ -170,10 +223,12 @@ jobs:
       - name: Préparer ImageMagick
         run: |
           set -e
+
           if ! command -v convert >/dev/null 2>&1; then
             sudo apt-get update
             sudo apt-get install -y imagemagick
           fi
+
           convert -version
 
       - name: Générer l'icône Android
@@ -184,10 +239,9 @@ jobs:
           set -euo pipefail
 
           RES="android/app/src/main/res"
+
           mkdir -p "$RES/drawable-nodpi"
 
-          # Supprime les anciens fichiers adaptatifs afin qu'Android utilise
-          # directement les PNG générés dans les dossiers mipmap-*.
           rm -f "$RES/mipmap-anydpi-v26/ic_launcher.xml"
           rm -f "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
           rm -f "$RES/drawable-v24/ic_launcher_foreground.xml"
@@ -198,18 +252,19 @@ jobs:
           if [ -n "${LOGO_BASE64:-}" ] && [ "${LOGO_BASE64:-}" != "null" ]; then
             echo "Logo sélectionné reçu depuis SimiRork."
 
-            printf '%s' "$LOGO_BASE64" | base64 --decode > selected-logo.bin
-            test -s selected-logo.bin || { echo "ERREUR : logo décodé vide."; exit 1; }
+            printf '%s' "$LOGO_BASE64" |
+              base64 --decode > selected-logo.bin
 
-            # ImageMagick détecte automatiquement PNG, JPEG ou WebP à partir du contenu.
-            identify selected-logo.bin >/dev/null 2>&1 || {
-              echo "ERREUR : le logo reçu n'est pas une image valide.";
-              exit 1;
+            test -s selected-logo.bin || {
+              echo "ERREUR : logo décodé vide."
+              exit 1
             }
 
-            # Normalise le logo vers un PNG carré 512x512.
-            # La version envoyée par page.tsx est déjà allégée ; cette étape garantit
-            # un format Android stable sans modifier le logo original enregistré.
+            identify selected-logo.bin >/dev/null 2>&1 || {
+              echo "ERREUR : le logo reçu n'est pas une image valide."
+              exit 1
+            }
+
             convert selected-logo.bin \
               -auto-orient \
               -resize '512x512^' \
@@ -219,11 +274,14 @@ jobs:
               PNG32:generated-app-icon.png
 
             ICON_SOURCE="generated-app-icon.png"
-            echo "Icône personnalisée préparée depuis le logo sélectionné."
-          else
-            echo "Aucun logo sélectionné reçu. Génération de l'icône de secours."
 
-          APP_NAME="$APP_NAME" python3 - <<'PY'
+            echo "Icône personnalisée préparée depuis le logo sélectionné."
+
+          else
+            echo "Aucun logo sélectionné reçu."
+            echo "Génération de l'icône de secours."
+
+            APP_NAME="$APP_NAME" python3 - <<'PY'
           import hashlib
           import html
           import os
@@ -231,11 +289,31 @@ jobs:
           import unicodedata
           from pathlib import Path
 
-          app_name = os.environ.get("APP_NAME", "SimiRork App").strip()
-          normalized = unicodedata.normalize("NFKD", app_name)
-          ascii_name = "".join(c for c in normalized if not unicodedata.combining(c))
-          letters = re.findall(r"[A-Za-z]", ascii_name.upper())
-          initials = "".join(letters[:2]) or "SR"
+          app_name = os.environ.get(
+              "APP_NAME",
+              "SimiRork App"
+          ).strip()
+
+          normalized = unicodedata.normalize(
+              "NFKD",
+              app_name
+          )
+
+          ascii_name = "".join(
+              c
+              for c in normalized
+              if not unicodedata.combining(c)
+          )
+
+          letters = re.findall(
+              r"[A-Za-z]",
+              ascii_name.upper()
+          )
+
+          initials = "".join(
+              letters[:2]
+          ) or "SR"
+
           initials = initials[:2]
 
           palettes = [
@@ -251,9 +329,18 @@ jobs:
               ("#0F766E", "#99F6E4"),
           ]
 
-          digest = hashlib.sha256(app_name.encode("utf-8")).hexdigest()
-          background, accent = palettes[int(digest[:8], 16) % len(palettes)]
-          safe_initials = html.escape(initials)
+          digest = hashlib.sha256(
+              app_name.encode("utf-8")
+          ).hexdigest()
+
+          background, accent = palettes[
+              int(digest[:8], 16)
+              % len(palettes)
+          ]
+
+          safe_initials = html.escape(
+              initials
+          )
 
           svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
             <rect width="1024" height="1024" rx="190" fill="{background}"/>
@@ -262,8 +349,16 @@ jobs:
             <text x="512" y="625" text-anchor="middle" font-family="DejaVu Sans" font-size="340" font-weight="700" fill="#FFFFFF">{safe_initials}</text>
           </svg>'''
 
-          Path("generated-app-icon.svg").write_text(svg, encoding="utf-8")
-          print(f"Icône de secours : {initials}")
+          Path(
+              "generated-app-icon.svg"
+          ).write_text(
+              svg,
+              encoding="utf-8"
+          )
+
+          print(
+              f"Icône de secours : {initials}"
+          )
           PY
 
             convert generated-app-icon.svg \
@@ -274,7 +369,10 @@ jobs:
             ICON_SOURCE="generated-app-icon.png"
           fi
 
-          test -s "$ICON_SOURCE" || { echo "ERREUR : source d'icône absente."; exit 1; }
+          test -s "$ICON_SOURCE" || {
+            echo "ERREUR : source d'icône absente."
+            exit 1
+          }
 
           declare -A ICON_SIZES=(
             [mdpi]=48
@@ -287,6 +385,7 @@ jobs:
           for density in "${!ICON_SIZES[@]}"; do
             size="${ICON_SIZES[$density]}"
             out="$RES/mipmap-${density}"
+
             mkdir -p "$out"
 
             convert "$ICON_SOURCE" \
@@ -303,6 +402,7 @@ jobs:
           echo "=========================================="
           echo "ICÔNES ANDROID GÉNÉRÉES"
           echo "=========================================="
+
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             ls -lh "$RES/mipmap-${density}/ic_launcher.png"
           done
@@ -329,11 +429,20 @@ jobs:
 
           echo "=========================================="
 
-          grep -n "applicationId" android/app/build.gradle
-          grep -n 'name="app_name"' android/app/src/main/res/values/strings.xml
-          grep -n 'android:label' android/app/src/main/AndroidManifest.xml || true
+          grep -n \
+            "applicationId" \
+            android/app/build.gradle
+
+          grep -n \
+            'name="app_name"' \
+            android/app/src/main/res/values/strings.xml
+
+          grep -n \
+            'android:label' \
+            android/app/src/main/AndroidManifest.xml || true
 
           test -s public/index.html
+
           test -s android/app/src/main/res/mipmap-mdpi/ic_launcher.png
           test -s android/app/src/main/res/mipmap-hdpi/ic_launcher.png
           test -s android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
@@ -367,8 +476,13 @@ jobs:
           APK_FILENAME: ${{ steps.app_info.outputs.apk_filename }}
         run: |
           set -e
+
           mkdir -p generated-apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk "generated-apk/$APK_FILENAME"
+
+          cp \
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            "generated-apk/$APK_FILENAME"
+
           ls -lh generated-apk/
 
       - name: Publier l'APK

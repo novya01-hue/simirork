@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -52,7 +53,9 @@ export async function POST(
         : 'SimiRork App';
 
     const projectId =
-      body?.projectId;
+      typeof body?.projectId === 'string'
+        ? body.projectId.trim()
+        : '';
 
     const logoBase64 =
       extractLogoBase64(
@@ -75,10 +78,7 @@ export async function POST(
       );
     }
 
-    if (
-      !projectId ||
-      typeof projectId !== 'string'
-    ) {
+    if (!projectId) {
       return NextResponse.json(
         {
           success: false,
@@ -106,6 +106,16 @@ export async function POST(
         }
       );
     }
+
+    /*
+     * Identifiant unique de CETTE demande APK.
+     *
+     * C'est lui qui permet de retrouver exactement
+     * le bon workflow GitHub et d'éviter de prendre
+     * une ancienne exécution.
+     */
+    const buildRequestId =
+      randomUUID();
 
     const htmlBase64 =
       Buffer.from(
@@ -153,6 +163,9 @@ export async function POST(
                 project_id:
                   projectId,
 
+                build_request_id:
+                  buildRequestId,
+
                 logo_base64:
                   logoBase64,
               },
@@ -184,9 +197,15 @@ export async function POST(
       | null =
       null;
 
+    /*
+     * On recherche maintenant le workflow portant
+     * exactement buildRequestId.
+     *
+     * Plus de confusion possible avec un ancien run.
+     */
     for (
       let attempt = 0;
-      attempt < 10;
+      attempt < 15;
       attempt++
     ) {
       await new Promise(
@@ -199,7 +218,7 @@ export async function POST(
 
       const runsResponse =
         await fetch(
-          `https://api.github.com/repos/${OWNER}/${REPO}/actions/runs?event=repository_dispatch&branch=main&per_page=10`,
+          `https://api.github.com/repos/${OWNER}/${REPO}/actions/runs?event=repository_dispatch&branch=main&per_page=20`,
           {
             headers: {
               Accept:
@@ -226,25 +245,50 @@ export async function POST(
       const runsData =
         await runsResponse.json();
 
-      const run =
-        runsData
-          ?.workflow_runs
-          ?.find(
-            (
-              item: any
-            ) => {
-              const created =
-                new Date(
-                  item.created_at
-                ).getTime();
+      const workflowRuns =
+        Array.isArray(
+          runsData?.workflow_runs
+        )
+          ? runsData.workflow_runs
+          : [];
 
-              return (
-                created >=
-                startedAt -
-                  10000
+      const run =
+        workflowRuns.find(
+          (
+            item: any
+          ) => {
+            const createdAt =
+              new Date(
+                item?.created_at ||
+                  0
+              ).getTime();
+
+            const displayTitle =
+              typeof item?.display_title ===
+              'string'
+                ? item.display_title
+                : '';
+
+            /*
+             * Le run-name du workflow contient
+             * buildRequestId.
+             */
+            const correctBuild =
+              displayTitle.includes(
+                buildRequestId
               );
-            }
-          );
+
+            const recentEnough =
+              createdAt >=
+              startedAt -
+                5000;
+
+            return (
+              correctBuild &&
+              recentEnough
+            );
+          }
+        );
 
       if (
         run?.id
@@ -262,8 +306,11 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
+
           error:
-            'Le build GitHub a été lancé, mais son identifiant n’a pas encore été trouvé.',
+            'Le build GitHub a été lancé, mais SimiRork n’a pas encore retrouvé son exécution exacte.',
+
+          buildRequestId,
         },
         {
           status: 202,
@@ -274,12 +321,17 @@ export async function POST(
     return NextResponse.json(
       {
         success: true,
+
         message:
           'Construction APK lancée.',
 
         runId,
+
         appName,
+
         projectId,
+
+        buildRequestId,
 
         logoProvided:
           Boolean(
@@ -296,6 +348,7 @@ export async function POST(
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
