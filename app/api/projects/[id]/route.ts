@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 
 import { auth } from '@/lib/auth/server';
 import { sql } from '@/lib/db';
@@ -11,6 +11,7 @@ type ProjectPayload = {
   description?: unknown;
   prompt?: unknown;
   code?: unknown;
+  logo?: unknown;
   apkStatus?: unknown;
   apkRunId?: unknown;
   apkError?: unknown;
@@ -54,7 +55,7 @@ async function getAuthenticatedUser() {
 }
 
 // ============================================================
-// GET — RECUPERER UN PROJET
+// GET — RÉCUPÉRER UN PROJET
 // ============================================================
 
 export async function GET(
@@ -99,6 +100,7 @@ export async function GET(
           description,
           prompt,
           code,
+          logo_json,
           apk_status,
           apk_run_id,
           apk_error,
@@ -147,6 +149,11 @@ export async function GET(
             String(
               row.code || ''
             ),
+          logo:
+            typeof row.logo_json === 'string' &&
+            row.logo_json.trim()
+              ? row.logo_json
+              : null,
           apkStatus:
             normalizeApkStatus(
               row.apk_status
@@ -255,6 +262,20 @@ export async function PATCH(
         body.code
       );
 
+    const hasLogo =
+      Object.prototype.hasOwnProperty.call(
+        body,
+        'logo'
+      );
+
+    const logo =
+      body.logo === null ||
+      body.logo === undefined
+        ? null
+        : cleanString(
+            body.logo
+          );
+
     if (!name) {
       return NextResponse.json(
         {
@@ -296,6 +317,10 @@ export async function PATCH(
           apk_status = ${apkStatus},
           apk_run_id = ${apkRunId},
           apk_error = ${apkError},
+          logo_json = CASE
+            WHEN ${hasLogo} THEN ${logo}
+            ELSE logo_json
+          END,
           updated_at = NOW()
         WHERE
           id = ${id}
@@ -306,6 +331,7 @@ export async function PATCH(
           description,
           prompt,
           code,
+          logo_json,
           apk_status,
           apk_run_id,
           apk_error,
@@ -349,6 +375,11 @@ export async function PATCH(
             String(
               row.code || ''
             ),
+          logo:
+            typeof row.logo_json === 'string' &&
+            row.logo_json.trim()
+              ? row.logo_json
+              : null,
           apkStatus:
             normalizeApkStatus(
               row.apk_status

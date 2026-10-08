@@ -13,187 +13,43 @@ type RouteContext = {
   }>;
 };
 
-type LogoStatus =
-  | 'generated'
-  | 'selected'
-  | 'edited'
-  | 'official'
-  | 'archived';
-
-type LogoSourceType =
-  | 'ai'
-  | 'manual_edit'
-  | 'ai_edit'
-  | 'imported';
-
-type LogoPayload = {
+type LogoBody = {
   imageData?: unknown;
   status?: unknown;
   sourceType?: unknown;
+  parentLogoId?: unknown;
+
   model?: unknown;
   generationPrompt?: unknown;
   editPrompt?: unknown;
   editData?: unknown;
-  parentLogoId?: unknown;
+
   imageWidth?: unknown;
   imageHeight?: unknown;
 };
 
-const ALLOWED_IMAGE_MIME_TYPES =
-  new Set([
-    'image/png',
-    'image/jpeg',
-    'image/webp',
-  ]);
+const ALLOWED_STATUSES = new Set([
+  'generated',
+  'selected',
+  'edited',
+  'archived',
+]);
 
-const ALLOWED_STATUSES =
-  new Set<LogoStatus>([
-    'generated',
-    'selected',
-    'edited',
-    'official',
-    'archived',
-  ]);
+const ALLOWED_SOURCE_TYPES = new Set([
+  'ai',
+  'manual_edit',
+  'ai_edit',
+  'imported',
+]);
 
-const ALLOWED_SOURCE_TYPES =
-  new Set<LogoSourceType>([
-    'ai',
-    'manual_edit',
-    'ai_edit',
-    'imported',
-  ]);
-
-/*
- * 8 Mo maximum pour le fichier image réel.
- *
- * Le texte base64 est plus volumineux,
- * donc on contrôle la taille après décodage.
- */
-const MAX_IMAGE_SIZE_BYTES =
-  8 * 1024 * 1024;
-
-function cleanOptionalString(
-  value: unknown
-): string | null {
-  if (
-    typeof value !== 'string'
-  ) {
-    return null;
-  }
-
-  const trimmed =
-    value.trim();
-
-  return trimmed
-    ? trimmed
-    : null;
-}
-
-function cleanPositiveInteger(
-  value: unknown
-): number | null {
-  if (
-    typeof value !== 'number' ||
-    !Number.isInteger(value) ||
-    value <= 0
-  ) {
-    return null;
-  }
-
-  return value;
-}
-
-function parseImageDataUrl(
-  value: unknown
-):
-  | {
-      imageData: string;
-      mimeType: string;
-      buffer: Buffer;
-      fileSizeBytes: number;
-      sha256: string;
-    }
-  | null {
-  if (
-    typeof value !== 'string' ||
-    !value.trim()
-  ) {
-    return null;
-  }
-
-  const imageData =
-    value.trim();
-
-  const match =
-    imageData.match(
-      /^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const mimeType =
-    match[1].toLowerCase();
-
-  if (
-    !ALLOWED_IMAGE_MIME_TYPES.has(
-      mimeType
-    )
-  ) {
-    return null;
-  }
-
-  try {
-    const base64 =
-      match[2].replace(
-        /\s+/g,
-        ''
-      );
-
-    const buffer =
-      Buffer.from(
-        base64,
-        'base64'
-      );
-
-    if (
-      !buffer.length ||
-      buffer.length >
-        MAX_IMAGE_SIZE_BYTES
-    ) {
-      return null;
-    }
-
-    const sha256 =
-      createHash('sha256')
-        .update(buffer)
-        .digest('hex');
-
-    return {
-      imageData,
-      mimeType,
-      buffer,
-      fileSizeBytes:
-        buffer.length,
-      sha256,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function normalizeLogoRow(
+function normalizeMetadataRow(
   row: any
 ) {
   return {
-    id:
-      String(row.id),
+    id: String(row.id),
 
     projectId:
-      String(
-        row.project_id
-      ),
+      String(row.project_id),
 
     parentLogoId:
       row.parent_logo_id
@@ -210,10 +66,12 @@ function normalizeLogoRow(
     status:
       String(row.status),
 
-    imageData:
-      String(
-        row.image_data
-      ),
+    /*
+     * IMPORTANT :
+     * l'historique GET ne transporte
+     * plus les énormes images Base64.
+     */
+    imageData: '',
 
     imageMimeType:
       row.image_mime_type
@@ -299,6 +157,22 @@ function normalizeLogoRow(
   };
 }
 
+function normalizeFullRow(
+  row: any
+) {
+  return {
+    ...normalizeMetadataRow(
+      row
+    ),
+
+    imageData:
+      String(
+        row.image_data ||
+          ''
+      ),
+  };
+}
+
 async function getAuthenticatedUser() {
   const {
     data: sessionData,
@@ -330,11 +204,87 @@ async function userOwnsProject(
   );
 }
 
+function parseImageDataUrl(
+  value: string
+): {
+  mimeType: string;
+  base64: string;
+  buffer: Buffer;
+} {
+  const match =
+    value.match(
+      /^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)$/
+    );
+
+  if (!match) {
+    throw new Error(
+      "Le format de l'image est invalide."
+    );
+  }
+
+  const mimeType =
+    match[1].toLowerCase();
+
+  const allowedMimeTypes =
+    new Set([
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+    ]);
+
+  if (
+    !allowedMimeTypes.has(
+      mimeType
+    )
+  ) {
+    throw new Error(
+      `Format d'image non pris en charge : ${mimeType}.`
+    );
+  }
+
+  const base64 =
+    match[2].replace(
+      /\s/g,
+      ''
+    );
+
+  const buffer =
+    Buffer.from(
+      base64,
+      'base64'
+    );
+
+  if (!buffer.length) {
+    throw new Error(
+      "L'image est vide."
+    );
+  }
+
+  return {
+    mimeType,
+    base64,
+    buffer,
+  };
+}
+
 /*
+ * ============================================================
  * GET
+ * ============================================================
  *
- * Retourne tout l'historique
- * des logos du projet.
+ * Charge uniquement les MÉTADONNÉES de l'historique.
+ *
+ * Avant :
+ * chaque version renvoyait image_data complet.
+ *
+ * Après plusieurs logos IA, cela pouvait représenter
+ * plusieurs dizaines de Mo et provoquer :
+ *
+ *     {"success":false,"error":"terminated"}
+ *
+ * Désormais aucune image Base64 n'est chargée
+ * dans cette requête.
  */
 export async function GET(
   _request: Request,
@@ -397,6 +347,11 @@ export async function GET(
       );
     }
 
+    /*
+     * IMPORTANT :
+     * image_data n'est volontairement
+     * PAS présent dans ce SELECT.
+     */
     const rows =
       await sql`
         SELECT
@@ -405,7 +360,6 @@ export async function GET(
           parent_logo_id,
           version_number,
           status,
-          image_data,
           image_mime_type,
           image_width,
           image_height,
@@ -421,17 +375,16 @@ export async function GET(
           official_at
         FROM simirork_project_logos
         WHERE
-          project_id = ${projectId}
+          project_id =
+            ${projectId}
         ORDER BY
-          version_number DESC,
-          created_at DESC
+          version_number DESC
       `;
 
     const logos =
-      Array.from(rows || [])
-        .map(
-          normalizeLogoRow
-        );
+      rows.map(
+        normalizeMetadataRow
+      );
 
     const selectedLogo =
       logos.find(
@@ -450,21 +403,34 @@ export async function GET(
     return NextResponse.json(
       {
         success: true,
+
         projectId,
+
         logos,
+
         selectedLogo,
+
         officialLogo,
+
+        /*
+         * Permettra à l'interface
+         * de savoir que les images
+         * doivent être chargées
+         * séparément à l'avenir.
+         */
+        imagesDeferred: true,
       }
     );
   } catch (error) {
     console.error(
-      'Erreur lecture logos:',
+      'Erreur GET historique logos:',
       error
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
@@ -478,10 +444,14 @@ export async function GET(
 }
 
 /*
+ * ============================================================
  * POST
+ * ============================================================
  *
- * Enregistre une nouvelle version
- * du logo sans supprimer les anciennes.
+ * Enregistre une nouvelle version de logo.
+ *
+ * Ici nous conservons image_data car cette requête
+ * ne traite qu'UNE seule nouvelle image.
  */
 export async function POST(
   request: Request,
@@ -544,21 +514,19 @@ export async function POST(
       );
     }
 
-    const body =
-      (await request.json()) as
-        LogoPayload;
+    let body:
+      | LogoBody
+      | null = null;
 
-    const parsedImage =
-      parseImageDataUrl(
-        body.imageData
-      );
-
-    if (!parsedImage) {
+    try {
+      body =
+        await request.json();
+    } catch {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Image du logo invalide. Formats acceptés : PNG, JPEG ou WebP, maximum 8 Mo.',
+            'Requête JSON invalide.',
         },
         {
           status: 400,
@@ -566,22 +534,60 @@ export async function POST(
       );
     }
 
-    const requestedStatus =
-      cleanOptionalString(
-        body.status
-      ) ||
-      'generated';
+    const imageData =
+      typeof body?.imageData ===
+      'string'
+        ? body.imageData.trim()
+        : '';
+
+    if (!imageData) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "L'image du logo est obligatoire.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const status =
+      typeof body?.status ===
+      'string'
+        ? body.status.trim()
+        : 'generated';
+
+    /*
+     * Le statut official est réservé
+     * à la route /official.
+     */
+    if (
+      status === 'official'
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Utilisez la route d'officialisation pour rendre un logo officiel.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
     if (
       !ALLOWED_STATUSES.has(
-        requestedStatus as LogoStatus
+        status
       )
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Statut de logo invalide.',
+            `Statut de logo invalide : ${status}.`,
         },
         {
           status: 400,
@@ -589,46 +595,22 @@ export async function POST(
       );
     }
 
-    /*
-     * La déclaration officielle sera
-     * gérée par une route séparée.
-     *
-     * Cela évite qu'un simple POST
-     * transforme accidentellement un logo
-     * en identité officielle.
-     */
-    if (
-      requestedStatus ===
-      'official'
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'Utilisez la route dédiée pour définir un logo comme identité officielle.',
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const requestedSourceType =
-      cleanOptionalString(
-        body.sourceType
-      ) ||
-      'ai';
+    const sourceType =
+      typeof body?.sourceType ===
+      'string'
+        ? body.sourceType.trim()
+        : 'imported';
 
     if (
       !ALLOWED_SOURCE_TYPES.has(
-        requestedSourceType as LogoSourceType
+        sourceType
       )
     ) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Type de source du logo invalide.',
+            `Type de source invalide : ${sourceType}.`,
         },
         {
           status: 400,
@@ -636,36 +618,125 @@ export async function POST(
       );
     }
 
-    const parentLogoId =
-      cleanOptionalString(
-        body.parentLogoId
+    const parsedImage =
+      parseImageDataUrl(
+        imageData
       );
 
+    const maxBytes =
+      8 * 1024 * 1024;
+
+    if (
+      parsedImage.buffer.length >
+      maxBytes
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Le logo dépasse la taille maximale de 8 Mo.',
+        },
+        {
+          status: 413,
+        }
+      );
+    }
+
+    const sha256 =
+      createHash(
+        'sha256'
+      )
+        .update(
+          parsedImage.buffer
+        )
+        .digest(
+          'hex'
+        );
+
     /*
-     * Si cette version provient
-     * d'une autre version,
-     * on vérifie que le parent appartient
-     * au même projet.
+     * Vérification du doublon.
      */
+    const duplicateRows =
+      await sql`
+        SELECT
+          id,
+          version_number,
+          status
+        FROM simirork_project_logos
+        WHERE
+          project_id =
+            ${projectId}
+          AND sha256 =
+            ${sha256}
+        LIMIT 1
+      `;
+
+    if (
+      duplicateRows?.[0]
+    ) {
+      const duplicate =
+        duplicateRows[0];
+
+      return NextResponse.json(
+        {
+          success: true,
+
+          duplicate: true,
+
+          message:
+            `Ce logo existe déjà en version ${Number(
+              duplicate.version_number
+            )}.`,
+
+          logoId:
+            String(
+              duplicate.id
+            ),
+
+          versionNumber:
+            Number(
+              duplicate
+                .version_number
+            ),
+
+          status:
+            String(
+              duplicate.status
+            ),
+        }
+      );
+    }
+
+    /*
+     * Logo parent éventuel.
+     */
+    const parentLogoId =
+      typeof body
+        ?.parentLogoId ===
+        'string' &&
+      body.parentLogoId.trim()
+        ? body.parentLogoId.trim()
+        : null;
+
     if (parentLogoId) {
       const parentRows =
         await sql`
           SELECT id
           FROM simirork_project_logos
           WHERE
-            id = ${parentLogoId}::uuid
-            AND project_id = ${projectId}
+            id =
+              ${parentLogoId}::uuid
+            AND project_id =
+              ${projectId}
           LIMIT 1
         `;
 
-      if (
-        !parentRows?.[0]
-      ) {
+      if (!parentRows?.[0]) {
         return NextResponse.json(
           {
             success: false,
             error:
-              'Le logo parent est introuvable pour ce projet.',
+              'Le logo parent est introuvable dans ce projet.',
           },
           {
             status: 400,
@@ -674,101 +745,8 @@ export async function POST(
       }
     }
 
-    const model =
-      cleanOptionalString(
-        body.model
-      );
-
-    const generationPrompt =
-      cleanOptionalString(
-        body.generationPrompt
-      );
-
-    const editPrompt =
-      cleanOptionalString(
-        body.editPrompt
-      );
-
-    const imageWidth =
-      cleanPositiveInteger(
-        body.imageWidth
-      );
-
-    const imageHeight =
-      cleanPositiveInteger(
-        body.imageHeight
-      );
-
-    const editData =
-      body.editData &&
-      typeof body.editData ===
-        'object' &&
-      !Array.isArray(
-        body.editData
-      )
-        ? body.editData
-        : {};
-
-    const editDataJson =
-      JSON.stringify(
-        editData
-      );
-
     /*
-     * Si exactement la même image
-     * existe déjà pour ce projet,
-     * on évite de créer une copie inutile.
-     */
-    const duplicateRows =
-      await sql`
-        SELECT
-          id,
-          project_id,
-          parent_logo_id,
-          version_number,
-          status,
-          image_data,
-          image_mime_type,
-          image_width,
-          image_height,
-          file_size_bytes,
-          source_type,
-          model,
-          generation_prompt,
-          edit_prompt,
-          edit_data,
-          sha256,
-          created_at,
-          selected_at,
-          official_at
-        FROM simirork_project_logos
-        WHERE
-          project_id = ${projectId}
-          AND sha256 = ${parsedImage.sha256}
-        ORDER BY version_number DESC
-        LIMIT 1
-      `;
-
-    if (
-      duplicateRows?.[0]
-    ) {
-      return NextResponse.json(
-        {
-          success: true,
-          duplicate: true,
-          message:
-            'Cette version du logo existe déjà.',
-          logo:
-            normalizeLogoRow(
-              duplicateRows[0]
-            ),
-        }
-      );
-    }
-
-    /*
-     * Recherche du prochain numéro
-     * de version du projet.
+     * Version suivante.
      */
     const versionRows =
       await sql`
@@ -776,13 +754,15 @@ export async function POST(
           COALESCE(
             MAX(version_number),
             0
-          ) + 1 AS next_version
+          ) + 1
+            AS next_version
         FROM simirork_project_logos
         WHERE
-          project_id = ${projectId}
+          project_id =
+            ${projectId}
       `;
 
-    const versionNumber =
+    const nextVersion =
       Number(
         versionRows?.[0]
           ?.next_version ||
@@ -790,35 +770,84 @@ export async function POST(
       );
 
     /*
-     * Si la nouvelle version doit devenir
-     * "selected", l'ancienne sélection
-     * repasse en "archived".
+     * Une seule version peut être
+     * selected.
      *
-     * L'ancien logo_json reste pour
-     * compatibilité avec SimiRork actuel.
+     * Le logo official n'est jamais
+     * modifié ici.
      */
     if (
-      requestedStatus ===
-      'selected'
+      status === 'selected'
     ) {
       await sql`
         UPDATE simirork_project_logos
-        SET status = 'archived'
+        SET
+          status =
+            'archived'
         WHERE
-          project_id = ${projectId}
-          AND status = 'selected'
+          project_id =
+            ${projectId}
+          AND status =
+            'selected'
       `;
     }
 
-    const selectedAt =
-      requestedStatus ===
-      'selected'
-        ? new Date()
+    const model =
+      typeof body?.model ===
+      'string'
+        ? body.model
+        : null;
+
+    const generationPrompt =
+      typeof body
+        ?.generationPrompt ===
+        'string'
+        ? body.generationPrompt
+        : null;
+
+    const editPrompt =
+      typeof body
+        ?.editPrompt ===
+        'string'
+        ? body.editPrompt
+        : null;
+
+    const editData =
+      body?.editData &&
+      typeof body.editData ===
+        'object'
+        ? JSON.stringify(
+            body.editData
+          )
+        : '{}';
+
+    const imageWidth =
+      Number.isFinite(
+        Number(
+          body?.imageWidth
+        )
+      )
+        ? Number(
+            body?.imageWidth
+          )
+        : null;
+
+    const imageHeight =
+      Number.isFinite(
+        Number(
+          body?.imageHeight
+        )
+      )
+        ? Number(
+            body?.imageHeight
+          )
         : null;
 
     const insertedRows =
       await sql`
-        INSERT INTO simirork_project_logos (
+        INSERT INTO
+          simirork_project_logos
+        (
           project_id,
           parent_logo_id,
           version_number,
@@ -836,27 +865,49 @@ export async function POST(
           sha256,
           selected_at
         )
-        VALUES (
+        VALUES
+        (
           ${projectId},
+
           ${
             parentLogoId
-              ? parentLogoId
-              : null
           }::uuid,
-          ${versionNumber},
-          ${requestedStatus},
-          ${parsedImage.imageData},
+
+          ${nextVersion},
+
+          ${status},
+
+          ${imageData},
+
           ${parsedImage.mimeType},
+
           ${imageWidth},
+
           ${imageHeight},
-          ${parsedImage.fileSizeBytes},
-          ${requestedSourceType},
+
+          ${
+            parsedImage
+              .buffer.length
+          },
+
+          ${sourceType},
+
           ${model},
+
           ${generationPrompt},
+
           ${editPrompt},
-          ${editDataJson}::jsonb,
-          ${parsedImage.sha256},
-          ${selectedAt}
+
+          ${editData}::jsonb,
+
+          ${sha256},
+
+          ${
+            status ===
+            'selected'
+              ? sql`NOW()`
+              : null
+          }
         )
         RETURNING
           id,
@@ -880,38 +931,38 @@ export async function POST(
           official_at
       `;
 
-    const row =
+    const insertedLogo =
       insertedRows?.[0];
 
-    if (!row) {
+    if (!insertedLogo) {
       throw new Error(
-        "La nouvelle version du logo n'a pas pu être enregistrée."
+        "Le logo n'a pas pu être enregistré."
       );
     }
 
     return NextResponse.json(
       {
         success: true,
+
         message:
-          `Logo version ${versionNumber} enregistré.`,
+          `Logo version ${nextVersion} enregistré.`,
+
         logo:
-          normalizeLogoRow(
-            row
+          normalizeFullRow(
+            insertedLogo
           ),
-      },
-      {
-        status: 201,
       }
     );
   } catch (error) {
     console.error(
-      'Erreur enregistrement logo:',
+      'Erreur POST version logo:',
       error
     );
 
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message

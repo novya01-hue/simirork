@@ -36,8 +36,15 @@ await sql`
     apk_error TEXT NOT NULL DEFAULT '',
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    logo_json TEXT
   )
+`;
+
+await sql`
+  ALTER TABLE simirork_projects
+  ADD COLUMN IF NOT EXISTS logo_json TEXT
 `;
 
 await sql`
@@ -52,6 +59,10 @@ await sql`
 
 console.log(
   '✅ Table simirork_projects créée/vérifiée.'
+);
+
+console.log(
+  '✅ Colonne logo_json créée/vérifiée.'
 );
 
 console.log(

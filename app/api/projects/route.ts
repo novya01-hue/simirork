@@ -12,6 +12,7 @@ type ProjectPayload = {
   description?: unknown;
   prompt?: unknown;
   code?: unknown;
+  logo?: unknown;
   apkStatus?: unknown;
   apkRunId?: unknown;
   apkError?: unknown;
@@ -98,6 +99,7 @@ export async function GET() {
         description,
         prompt,
         code,
+        logo_json,
         apk_status,
         apk_run_id,
         apk_error,
@@ -130,6 +132,11 @@ export async function GET() {
             String(
               row.code || ''
             ),
+          logo:
+            typeof row.logo_json === 'string' &&
+            row.logo_json.trim()
+              ? row.logo_json
+              : null,
           apkStatus:
             normalizeApkStatus(
               row.apk_status
@@ -237,6 +244,14 @@ export async function POST(
         body.code
       );
 
+    const logo =
+      body.logo === null ||
+      body.logo === undefined
+        ? null
+        : cleanString(
+            body.logo
+          );
+
     if (!name) {
       return NextResponse.json(
         {
@@ -313,6 +328,7 @@ export async function POST(
               description,
               prompt,
               code,
+              logo_json,
               apk_status,
               apk_run_id,
               apk_error,
@@ -326,6 +342,7 @@ export async function POST(
               ${description},
               ${prompt},
               ${code},
+              ${logo},
               ${apkStatus},
               ${apkRunId},
               ${apkError},
@@ -338,6 +355,7 @@ export async function POST(
               description,
               prompt,
               code,
+              logo_json,
               apk_status,
               apk_run_id,
               apk_error,
@@ -352,6 +370,7 @@ export async function POST(
               description,
               prompt,
               code,
+              logo_json,
               apk_status,
               apk_run_id,
               apk_error
@@ -363,6 +382,7 @@ export async function POST(
               ${description},
               ${prompt},
               ${code},
+              ${logo},
               ${apkStatus},
               ${apkRunId},
               ${apkError}
@@ -373,6 +393,7 @@ export async function POST(
               description,
               prompt,
               code,
+              logo_json,
               apk_status,
               apk_run_id,
               apk_error,
@@ -412,6 +433,11 @@ export async function POST(
             String(
               row.code || ''
             ),
+          logo:
+            typeof row.logo_json === 'string' &&
+            row.logo_json.trim()
+              ? row.logo_json
+              : null,
           apkStatus:
             normalizeApkStatus(
               row.apk_status
@@ -458,3 +484,4 @@ export async function POST(
     );
   }
 }
+
