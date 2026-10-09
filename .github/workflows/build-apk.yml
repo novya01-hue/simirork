@@ -23,16 +23,31 @@ jobs:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
         run: |
           APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
-          APP_NAME=$(printf '%s' "$APP_NAME" | tr '\r\n\t' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' | sed 's/^ *//;s/ *$//')
+
+          APP_NAME=$(printf '%s' "$APP_NAME" |
+            tr '\r\n\t' ' ' |
+            sed 's/[[:space:]][[:space:]]*/ /g' |
+            sed 's/^ *//;s/ *$//')
+
           [ -n "$APP_NAME" ] || APP_NAME="SimiRork App"
 
-          ASCII_NAME=$(printf '%s' "$APP_NAME" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$APP_NAME")
+          ASCII_NAME=$(printf '%s' "$APP_NAME" |
+            iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null ||
+            printf '%s' "$APP_NAME")
 
-          FILE_SLUG=$(printf '%s' "$ASCII_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9][^a-z0-9]*/-/g' | sed 's/^-//;s/-$//')
+          FILE_SLUG=$(printf '%s' "$ASCII_NAME" |
+            tr '[:upper:]' '[:lower:]' |
+            sed 's/[^a-z0-9][^a-z0-9]*/-/g' |
+            sed 's/^-//;s/-$//')
+
           [ -n "$FILE_SLUG" ] || FILE_SLUG="simirork-app"
+
           APK_FILENAME="${FILE_SLUG}.apk"
 
-          PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
+          PACKAGE_SLUG=$(printf '%s' "$ASCII_NAME" |
+            tr '[:upper:]' '[:lower:]' |
+            sed 's/[^a-z0-9]//g')
+
           [ -n "$PACKAGE_SLUG" ] || PACKAGE_SLUG="app"
 
           FIRST_CHAR=$(printf '%s' "$PACKAGE_SLUG" | cut -c1)
@@ -44,7 +59,10 @@ jobs:
 
           PACKAGE_SLUG=$(printf '%s' "$PACKAGE_SLUG" | cut -c1-24)
 
-          HASH_VALUE=$(printf '%s' "$APP_NAME" | sha256sum | cut -c1-8)
+          HASH_VALUE=$(printf '%s' "$APP_NAME" |
+            sha256sum |
+            cut -c1-8)
+
           APPLICATION_ID="com.yoski.app.${PACKAGE_SLUG}.a${HASH_VALUE}"
 
           echo "Nom application : $APP_NAME"
@@ -173,9 +191,23 @@ jobs:
           tree = ET.parse(path)
           root = tree.getroot()
 
+          def android_string(value: str) -> str:
+              return (
+                  value
+                  .replace("\\", "\\\\")
+                  .replace("'", "\\'")
+                  .replace("\n", "\\n")
+                  .replace("\r", "")
+                  .replace("\t", " ")
+              )
+
+          app_name = android_string(
+              os.environ["APP_NAME"]
+          )
+
           values = {
-              "app_name": os.environ["APP_NAME"],
-              "title_activity_main": os.environ["APP_NAME"],
+              "app_name": app_name,
+              "title_activity_main": app_name,
               "package_name": os.environ["APPLICATION_ID"],
               "custom_url_scheme": os.environ["APPLICATION_ID"],
           }
@@ -204,6 +236,9 @@ jobs:
               encoding="utf-8",
               xml_declaration=True
           )
+
+          print("strings.xml Android corrigé :")
+          print(path.read_text(encoding="utf-8"))
           PY
 
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
@@ -449,9 +484,11 @@ jobs:
           }
 
           echo "Splash personnalisé créé : $SPLASH_FILE"
+
           ls -lh "$SPLASH_FILE"
 
           echo "Références splash présentes dans les styles Android :"
+
           grep -Rni "splash" "$RES"/values*/*.xml 2>/dev/null || true
 
       - name: Vérifier la configuration finale
@@ -465,6 +502,7 @@ jobs:
           echo "=========================================="
           echo "IDENTITÉ APK"
           echo "=========================================="
+
           echo "Nom            : $APP_NAME"
           echo "Application ID : $APPLICATION_ID"
 
@@ -482,6 +520,10 @@ jobs:
 
           grep -n \
             'name="app_name"' \
+            android/app/src/main/res/values/strings.xml
+
+          grep -n \
+            'name="title_activity_main"' \
             android/app/src/main/res/values/strings.xml
 
           grep -n \
