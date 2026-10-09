@@ -17,11 +17,210 @@ jobs:
       - name: Récupérer le projet
         uses: actions/checkout@v7
 
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Installer les dépendances Node
+        run: npm ci
+
+      # ============================================================
+      # NOUVEAU SYSTÈME
+      #
+      # GitHub ne reçoit plus le HTML et le logo dans client_payload.
+      #
+      # Il reçoit uniquement project_id puis télécharge les données
+      # directement depuis SimiRork.
+      # ============================================================
+
+      - name: Récupérer le HTML et le logo depuis SimiRork
+        if: ${{ github.event_name == 'repository_dispatch' }}
+        env:
+          PROJECT_ID: ${{ github.event.client_payload.project_id }}
+          BUILD_SECRET: ${{ secrets.SIMIRORK_BUILD_SECRET }}
+        run: |
+          set -euo pipefail
+
+          [ -n "${PROJECT_ID:-}" ] || {
+            echo "ERREUR : project_id absent."
+            exit 1
+          }
+
+          [ -n "${BUILD_SECRET:-}" ] || {
+            echo "ERREUR : secret SIMIRORK_BUILD_SECRET absent dans GitHub."
+            exit 1
+          }
+
+          echo "Projet demandé : $PROJECT_ID"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 4 \
+            --retry-delay 2 \
+            --connect-timeout 20 \
+            --max-time 120 \
+            -H "Authorization: Bearer $BUILD_SECRET" \
+            -H "Accept: application/json" \
+            "https://simirork.vercel.app/api/build-apk?projectId=${PROJECT_ID}" \
+            -o /tmp/simirork-build-source.json
+
+          test -s /tmp/simirork-build-source.json || {
+            echo "ERREUR : réponse SimiRork vide."
+            exit 1
+          }
+
+          mkdir -p public
+
+          node <<'NODE'
+          const fs = require('fs');
+
+          const sourcePath =
+            '/tmp/simirork-build-source.json';
+
+          const raw =
+            fs.readFileSync(
+              sourcePath,
+              'utf8'
+            );
+
+          let data;
+
+          try {
+            data =
+              JSON.parse(raw);
+          } catch (error) {
+            console.error(
+              'Réponse SimiRork JSON invalide.'
+            );
+
+            console.error(
+              raw.slice(0, 1000)
+            );
+
+            process.exit(1);
+          }
+
+          if (
+            !data ||
+            data.success !== true ||
+            !data.project
+          ) {
+            console.error(
+              'SimiRork a refusé la récupération du projet :'
+            );
+
+            console.error(
+              data
+            );
+
+            process.exit(1);
+          }
+
+          const project =
+            data.project;
+
+          const html =
+            typeof project.code ===
+              'string'
+              ? project.code
+              : '';
+
+          if (
+            !html.trim()
+          ) {
+            console.error(
+              'Le HTML récupéré est vide.'
+            );
+
+            process.exit(1);
+          }
+
+          fs.writeFileSync(
+            'public/index.html',
+            html,
+            'utf8'
+          );
+
+          console.log(
+            `HTML récupéré : ${Buffer.byteLength(html, 'utf8')} octets`
+          );
+
+          const logo =
+            typeof project.logo ===
+              'string'
+              ? project.logo
+              : '';
+
+          if (
+            logo.startsWith(
+              'data:image/'
+            )
+          ) {
+            const match =
+              logo.match(
+                /^data:([^;]+);base64,(.+)$/s
+              );
+
+            if (match) {
+              const base64 =
+                match[2];
+
+              const buffer =
+                Buffer.from(
+                  base64,
+                  'base64'
+                );
+
+              if (
+                buffer.length > 0
+              ) {
+                fs.writeFileSync(
+                  'selected-logo.bin',
+                  buffer
+                );
+
+                console.log(
+                  `Logo récupéré : ${buffer.length} octets`
+                );
+              }
+            }
+          } else {
+            console.log(
+              'Aucun logo personnalisé récupéré.'
+            );
+          }
+          NODE
+
+          test -s public/index.html || {
+            echo "ERREUR : public/index.html est vide."
+            exit 1
+          }
+
+          echo "=========================================="
+          echo "SOURCE SIMIRORK RÉCUPÉRÉE"
+          echo "=========================================="
+
+          wc -c public/index.html
+
+          if [ -s selected-logo.bin ]; then
+            echo "Logo personnalisé disponible."
+            ls -lh selected-logo.bin
+          else
+            echo "Aucun logo personnalisé : icône de secours utilisée."
+          fi
+
       - name: Préparer l'identité de l'application
         id: app_info
         env:
           APP_NAME_INPUT: ${{ github.event.client_payload.app_name }}
         run: |
+          set -e
+
           APP_NAME="${APP_NAME_INPUT:-SimiRork App}"
 
           APP_NAME=$(printf '%s' "$APP_NAME" |
@@ -75,36 +274,6 @@ jobs:
             echo "apk_filename=$APK_FILENAME"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Injecter le HTML généré
-        if: ${{ github.event_name == 'repository_dispatch' }}
-        env:
-          HTML_BASE64: ${{ github.event.client_payload.html_base64 }}
-        run: |
-          set -e
-
-          [ -n "$HTML_BASE64" ] || {
-            echo "ERREUR : aucun HTML reçu."
-            exit 1
-          }
-
-          mkdir -p public
-
-          printf '%s' "$HTML_BASE64" |
-            base64 --decode > public/index.html
-
-          test -s public/index.html || {
-            echo "ERREUR : public/index.html est vide."
-            exit 1
-          }
-
-          echo "HTML injecté : $(wc -c < public/index.html) octets"
-
-      - name: Installer Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          package-manager-cache: false
-
       - name: Installer Java 21
         uses: actions/setup-java@v6
         with:
@@ -120,9 +289,6 @@ jobs:
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0"
-
-      - name: Installer les dépendances Node
-        run: npm ci
 
       - name: Configurer Capacitor pour l'application
         env:
@@ -206,10 +372,17 @@ jobs:
           )
 
           values = {
-              "app_name": app_name,
-              "title_activity_main": app_name,
-              "package_name": os.environ["APPLICATION_ID"],
-              "custom_url_scheme": os.environ["APPLICATION_ID"],
+              "app_name":
+                  app_name,
+
+              "title_activity_main":
+                  app_name,
+
+              "package_name":
+                  os.environ["APPLICATION_ID"],
+
+              "custom_url_scheme":
+                  os.environ["APPLICATION_ID"],
           }
 
           for key, value in values.items():
@@ -221,7 +394,9 @@ jobs:
                   node = ET.SubElement(
                       root,
                       "string",
-                      {"name": key}
+                      {
+                          "name": key
+                      }
                   )
 
               node.text = value
@@ -237,8 +412,11 @@ jobs:
               xml_declaration=True
           )
 
-          print("strings.xml Android corrigé :")
-          print(path.read_text(encoding="utf-8"))
+          print(
+              path.read_text(
+                  encoding="utf-8"
+              )
+          )
           PY
 
           MANIFEST_FILE="android/app/src/main/AndroidManifest.xml"
@@ -269,7 +447,6 @@ jobs:
       - name: Générer l'icône Android
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
-          LOGO_BASE64: ${{ github.event.client_payload.logo_base64 }}
         run: |
           set -euo pipefail
 
@@ -284,16 +461,9 @@ jobs:
 
           ICON_SOURCE=""
 
-          if [ -n "${LOGO_BASE64:-}" ] && [ "${LOGO_BASE64:-}" != "null" ]; then
-            echo "Logo sélectionné reçu depuis SimiRork."
+          if [ -s selected-logo.bin ]; then
 
-            printf '%s' "$LOGO_BASE64" |
-              base64 --decode > selected-logo.bin
-
-            test -s selected-logo.bin || {
-              echo "ERREUR : logo décodé vide."
-              exit 1
-            }
+            echo "Logo sélectionné récupéré depuis SimiRork."
 
             identify selected-logo.bin >/dev/null 2>&1 || {
               echo "ERREUR : le logo reçu n'est pas une image valide."
@@ -310,10 +480,11 @@ jobs:
 
             ICON_SOURCE="generated-app-icon.png"
 
-            echo "Icône personnalisée préparée depuis le logo sélectionné."
+            echo "Icône personnalisée préparée."
 
           else
-            echo "Aucun logo sélectionné reçu."
+
+            echo "Aucun logo sélectionné."
             echo "Génération de l'icône de secours."
 
             APP_NAME="$APP_NAME" python3 - <<'PY'
@@ -418,6 +589,7 @@ jobs:
           )
 
           for density in "${!ICON_SIZES[@]}"; do
+
             size="${ICON_SIZES[$density]}"
             out="$RES/mipmap-${density}"
 
@@ -487,15 +659,10 @@ jobs:
 
           ls -lh "$SPLASH_FILE"
 
-          echo "Références splash présentes dans les styles Android :"
-
-          grep -Rni "splash" "$RES"/values*/*.xml 2>/dev/null || true
-
       - name: Vérifier la configuration finale
         env:
           APP_NAME: ${{ steps.app_info.outputs.app_name }}
           APPLICATION_ID: ${{ steps.app_info.outputs.application_id }}
-          LOGO_BASE64: ${{ github.event.client_payload.logo_base64 }}
         run: |
           set -e
 
@@ -506,7 +673,7 @@ jobs:
           echo "Nom            : $APP_NAME"
           echo "Application ID : $APPLICATION_ID"
 
-          if [ -n "${LOGO_BASE64:-}" ] && [ "${LOGO_BASE64:-}" != "null" ]; then
+          if [ -s selected-logo.bin ]; then
             echo "Icône           : logo sélectionné SimiRork"
           else
             echo "Icône           : icône automatique de secours"
@@ -550,7 +717,6 @@ jobs:
 
           test -s android/app/src/main/res/drawable/splash.png
 
-          echo "Splash          : logo sélectionné / icône de l'application"
           echo "Vérification OK."
 
       - name: Préparer Gradle

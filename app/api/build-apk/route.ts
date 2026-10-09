@@ -1,105 +1,101 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 
+import { auth } from '@/lib/auth/server';
+import { sql } from '@/lib/db';
+
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 const OWNER = 'novya01-hue';
 const REPO = 'simirork';
 const WORKFLOW_EVENT = 'build_apk';
 
-function extractLogoBase64(
+const GITHUB_API =
+  `https://api.github.com/repos/${OWNER}/${REPO}`;
+
+type BuildApkBody = {
+  projectId?: unknown;
+  appName?: unknown;
+
+  /*
+   * Anciens champs.
+   *
+   * Ils peuvent encore être envoyés temporairement
+   * par app/page.tsx, mais cette route ne les transmet
+   * PLUS à GitHub.
+   */
+  code?: unknown;
+  logo?: unknown;
+};
+
+function cleanString(
   value: unknown
-): string | null {
-  if (
-    typeof value !== 'string' ||
-    !value.trim()
-  ) {
-    return null;
-  }
-
-  const trimmed =
-    value.trim();
-
-  const match =
-    trimmed.match(
-      /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const base64 =
-    match[1]?.trim();
-
-  return base64 || null;
+): string {
+  return typeof value === 'string'
+    ? value.trim()
+    : '';
 }
 
-export async function POST(
+async function getAuthenticatedUser() {
+  const {
+    data: sessionData,
+  } = await auth.getSession();
+
+  return (
+    sessionData?.user ||
+    null
+  );
+}
+
+function sleep(
+  milliseconds: number
+) {
+  return new Promise<void>(
+    (resolve) => {
+      setTimeout(
+        resolve,
+        milliseconds
+      );
+    }
+  );
+}
+
+/*
+ * ============================================================
+ * GET
+ *
+ * Utilisé UNIQUEMENT par GitHub Actions.
+ *
+ * GitHub fournit :
+ *
+ * Authorization: Bearer SIMIRORK_BUILD_SECRET
+ *
+ * puis :
+ *
+ * /api/build-apk?projectId=...
+ *
+ * Cette route récupère le HTML et le logo directement
+ * dans Neon.
+ * ============================================================
+ */
+
+export async function GET(
   request: Request
 ) {
   try {
-    const body =
-      await request.json();
+    const buildSecret =
+      process.env
+        .SIMIRORK_BUILD_SECRET
+        ?.trim();
 
-    const code =
-      body?.code;
-
-    const appName =
-      typeof body?.appName === 'string' &&
-      body.appName.trim()
-        ? body.appName.trim()
-        : 'SimiRork App';
-
-    const projectId =
-      typeof body?.projectId === 'string'
-        ? body.projectId.trim()
-        : '';
-
-    const logoBase64 =
-      extractLogoBase64(
-        body?.logo
-      );
-
-    if (
-      !code ||
-      typeof code !== 'string'
-    ) {
+    if (!buildSecret) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Aucun code d’application à compiler.',
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!projectId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'Identifiant du projet manquant.',
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const token =
-      process.env.GITHUB_TOKEN;
-
-    if (!token) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'GITHUB_TOKEN est absente de Vercel.',
+            'SIMIRORK_BUILD_SECRET n’est pas configuré sur le serveur.',
         },
         {
           status: 500,
@@ -107,30 +103,377 @@ export async function POST(
       );
     }
 
+    const authorization =
+      request.headers.get(
+        'authorization'
+      ) || '';
+
+    const expectedAuthorization =
+      `Bearer ${buildSecret}`;
+
+    if (
+      authorization !==
+      expectedAuthorization
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Accès refusé.',
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    const url =
+      new URL(
+        request.url
+      );
+
+    const projectId =
+      (
+        url.searchParams.get(
+          'projectId'
+        ) || ''
+      ).trim();
+
+    if (!projectId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'projectId est obligatoire.',
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const rows =
+      await sql`
+        SELECT
+          id,
+          name,
+          code,
+          logo_json
+        FROM simirork_projects
+        WHERE id = ${projectId}
+        LIMIT 1
+      `;
+
+    const row =
+      rows?.[0];
+
+    if (!row) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Projet introuvable.',
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    const code =
+      String(
+        row.code || ''
+      );
+
+    if (!code.trim()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Le projet ne contient aucun HTML.',
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     /*
-     * Identifiant unique de CETTE demande APK.
+     * Le logo historique de SimiRork est stocké
+     * dans logo_json sous la forme :
      *
-     * C'est lui qui permet de retrouver exactement
-     * le bon workflow GitHub et d'éviter de prendre
-     * une ancienne exécution.
+     * {
+     *   "image": "data:image/png;base64,..."
+     * }
      */
+
+    let logo:
+      string | null = null;
+
+    if (
+      typeof row.logo_json ===
+        'string' &&
+      row.logo_json.trim()
+    ) {
+      try {
+        const parsed =
+          JSON.parse(
+            row.logo_json
+          );
+
+        if (
+          parsed &&
+          typeof parsed ===
+            'object' &&
+          typeof parsed.image ===
+            'string' &&
+          parsed.image.startsWith(
+            'data:image/'
+          )
+        ) {
+          logo =
+            parsed.image;
+        }
+      } catch {
+        /*
+         * Un logo invalide ne doit pas empêcher
+         * la construction de l'APK.
+         *
+         * Le workflow générera alors
+         * l'icône de secours.
+         */
+        logo = null;
+      }
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+
+        project: {
+          id:
+            String(
+              row.id
+            ),
+
+          name:
+            String(
+              row.name ||
+                'SimiRork App'
+            ),
+
+          code,
+
+          logo,
+        },
+      },
+      {
+        status: 200,
+        headers: {
+          'Cache-Control':
+            'no-store, max-age=0',
+        },
+      }
+    );
+  } catch (error) {
+    console.error(
+      'Erreur récupération source APK :',
+      error
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Impossible de récupérer les données du projet.',
+      },
+      {
+        status: 500,
+      }
+    );
+  }
+}
+
+/*
+ * ============================================================
+ * POST
+ *
+ * Appelé depuis SimiRork lorsqu'on clique :
+ *
+ * Générer APK
+ *
+ * IMPORTANT :
+ *
+ * Nous n'envoyons PLUS :
+ *
+ * - code
+ * - html_base64
+ * - logo
+ * - logo_base64
+ *
+ * dans client_payload GitHub.
+ *
+ * GitHub reçoit uniquement de petites informations.
+ * ============================================================
+ */
+
+export async function POST(
+  request: Request
+) {
+  try {
+    const user =
+      await getAuthenticatedUser();
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Vous devez être connecté.',
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    const githubToken =
+      process.env
+        .GITHUB_TOKEN
+        ?.trim();
+
+    if (!githubToken) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'GITHUB_TOKEN n’est pas configuré.',
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    const body =
+      await request.json() as
+        BuildApkBody;
+
+    const projectId =
+      cleanString(
+        body.projectId
+      );
+
+    if (!projectId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'projectId est obligatoire pour construire l’APK.',
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+     * Sécurité :
+     *
+     * on vérifie que le projet appartient
+     * bien à l'utilisateur connecté.
+     */
+
+    const projectRows =
+      await sql`
+        SELECT
+          id,
+          name,
+          code
+        FROM simirork_projects
+        WHERE
+          id = ${projectId}
+          AND user_id = ${user.id}
+        LIMIT 1
+      `;
+
+    const project =
+      projectRows?.[0];
+
+    if (!project) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Projet introuvable ou accès refusé.',
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    const projectCode =
+      String(
+        project.code || ''
+      );
+
+    if (!projectCode.trim()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Ce projet ne contient aucun HTML à construire.',
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const appName =
+      String(
+        project.name ||
+          cleanString(
+            body.appName
+          ) ||
+          'SimiRork App'
+      ).trim();
+
     const buildRequestId =
       randomUUID();
 
-    const htmlBase64 =
-      Buffer.from(
-        code,
-        'utf8'
-      ).toString(
-        'base64'
-      );
-
-    const startedAt =
+    const dispatchStartedAt =
       Date.now();
+
+    /*
+     * NOUVEAU PAYLOAD LÉGER.
+     *
+     * Même si le futur projet fait plusieurs Mo,
+     * client_payload restera minuscule.
+     */
+
+    const dispatchPayload = {
+      event_type:
+        WORKFLOW_EVENT,
+
+      client_payload: {
+        build_request_id:
+          buildRequestId,
+
+        project_id:
+          projectId,
+
+        app_name:
+          appName,
+      },
+    };
 
     const dispatchResponse =
       await fetch(
-        `https://api.github.com/repos/${OWNER}/${REPO}/dispatches`,
+        `${GITHUB_API}/dispatches`,
         {
           method: 'POST',
 
@@ -139,37 +482,21 @@ export async function POST(
               'application/vnd.github+json',
 
             Authorization:
-              `Bearer ${token}`,
+              `Bearer ${githubToken}`,
 
             'X-GitHub-Api-Version':
-              '2026-03-10',
+              '2022-11-28',
 
             'Content-Type':
               'application/json',
           },
 
           body:
-            JSON.stringify({
-              event_type:
-                WORKFLOW_EVENT,
+            JSON.stringify(
+              dispatchPayload
+            ),
 
-              client_payload: {
-                html_base64:
-                  htmlBase64,
-
-                app_name:
-                  appName,
-
-                project_id:
-                  projectId,
-
-                build_request_id:
-                  buildRequestId,
-
-                logo_base64:
-                  logoBase64,
-              },
-            }),
+          cache: 'no-store',
         }
       );
 
@@ -179,9 +506,16 @@ export async function POST(
       const errorText =
         await dispatchResponse.text();
 
+      console.error(
+        'Erreur repository_dispatch GitHub :',
+        dispatchResponse.status,
+        errorText
+      );
+
       return NextResponse.json(
         {
           success: false,
+
           error:
             `GitHub a refusé le lancement du build : ${errorText}`,
         },
@@ -192,47 +526,55 @@ export async function POST(
       );
     }
 
-    let runId:
-      | number
-      | null =
-      null;
-
     /*
-     * On recherche maintenant le workflow portant
-     * exactement buildRequestId.
+     * repository_dispatch ne renvoie pas directement
+     * le Run ID.
      *
-     * Plus de confusion possible avec un ancien run.
+     * On cherche donc le workflow nouvellement créé.
+     *
+     * Le run-name contient buildRequestId,
+     * ce qui permet de retrouver précisément
+     * le bon build.
      */
+
+    let runId:
+      number | null = null;
+
+    let runUrl:
+      string | null = null;
+
     for (
       let attempt = 0;
-      attempt < 15;
-      attempt++
+      attempt < 20;
+      attempt += 1
     ) {
-      await new Promise(
-        (resolve) =>
-          setTimeout(
-            resolve,
-            2000
-          )
+      /*
+       * Le workflow peut prendre quelques secondes
+       * avant d'apparaître dans l'API GitHub.
+       */
+
+      await sleep(
+        attempt === 0
+          ? 800
+          : 1000
       );
 
       const runsResponse =
         await fetch(
-          `https://api.github.com/repos/${OWNER}/${REPO}/actions/runs?event=repository_dispatch&branch=main&per_page=20`,
+          `${GITHUB_API}/actions/runs?event=repository_dispatch&branch=main&per_page=30`,
           {
             headers: {
               Accept:
                 'application/vnd.github+json',
 
               Authorization:
-                `Bearer ${token}`,
+                `Bearer ${githubToken}`,
 
               'X-GitHub-Api-Version':
-                '2026-03-10',
+                '2022-11-28',
             },
 
-            cache:
-              'no-store',
+            cache: 'no-store',
           }
         );
 
@@ -243,60 +585,77 @@ export async function POST(
       }
 
       const runsData =
-        await runsResponse.json();
+        await runsResponse.json() as {
+          workflow_runs?: Array<{
+            id?: number;
+            name?: string;
+            display_title?: string;
+            created_at?: string;
+            html_url?: string;
+          }>;
+        };
 
-      const workflowRuns =
+      const runs =
         Array.isArray(
-          runsData?.workflow_runs
+          runsData.workflow_runs
         )
           ? runsData.workflow_runs
           : [];
 
-      const run =
-        workflowRuns.find(
-          (
-            item: any
-          ) => {
-            const createdAt =
-              new Date(
-                item?.created_at ||
-                  0
-              ).getTime();
-
+      const matchingRun =
+        runs.find(
+          (run) => {
             const displayTitle =
-              typeof item?.display_title ===
-              'string'
-                ? item.display_title
-                : '';
-
-            /*
-             * Le run-name du workflow contient
-             * buildRequestId.
-             */
-            const correctBuild =
-              displayTitle.includes(
-                buildRequestId
+              String(
+                run.display_title ||
+                  ''
               );
 
-            const recentEnough =
-              createdAt >=
-              startedAt -
-                5000;
+            if (
+              displayTitle.includes(
+                buildRequestId
+              )
+            ) {
+              return true;
+            }
+
+            /*
+             * Sécurité supplémentaire :
+             * on ignore les vieux runs.
+             */
+
+            const createdAt =
+              run.created_at
+                ? new Date(
+                    run.created_at
+                  ).getTime()
+                : 0;
 
             return (
-              correctBuild &&
-              recentEnough
+              displayTitle.includes(
+                appName
+              ) &&
+              createdAt >=
+                dispatchStartedAt -
+                  5000
             );
           }
         );
 
       if (
-        run?.id
+        matchingRun?.id
       ) {
         runId =
           Number(
-            run.id
+            matchingRun.id
           );
+
+        runUrl =
+          matchingRun.html_url
+            ? String(
+                matchingRun.html_url
+              )
+            : null;
 
         break;
       }
@@ -308,12 +667,10 @@ export async function POST(
           success: false,
 
           error:
-            'Le build GitHub a été lancé, mais SimiRork n’a pas encore retrouvé son exécution exacte.',
-
-          buildRequestId,
+            'Le workflow GitHub a été déclenché, mais son Run ID n’a pas encore pu être retrouvé. Vérifiez GitHub Actions.',
         },
         {
-          status: 202,
+          status: 504,
         }
       );
     }
@@ -322,26 +679,26 @@ export async function POST(
       {
         success: true,
 
-        message:
-          'Construction APK lancée.',
+        runId:
+          String(
+            runId
+          ),
 
-        runId,
-
-        appName,
-
-        projectId,
+        runUrl,
 
         buildRequestId,
 
-        logoProvided:
-          Boolean(
-            logoBase64
-          ),
+        projectId,
+
+        appName,
+      },
+      {
+        status: 200,
       }
     );
   } catch (error) {
     console.error(
-      'Erreur lancement APK:',
+      'Erreur lancement APK :',
       error
     );
 
@@ -352,7 +709,7 @@ export async function POST(
         error:
           error instanceof Error
             ? error.message
-            : 'Erreur inconnue.',
+            : 'Erreur pendant le lancement de la construction APK.',
       },
       {
         status: 500,
